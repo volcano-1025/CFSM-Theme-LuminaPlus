@@ -28,9 +28,11 @@ import { Spinner } from "@/components/ui/Spinner";
 import { Flag } from "@/components/ui/Flag";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useHourlyClock } from "@/hooks/useClock";
+import { useLocalThemeSettings } from "@/hooks/useThemeSettings";
 import { getNodes } from "@/services/api";
 import { carrierPingTasks } from "@/services/cfsm/mappers";
 import {
+  getLocalThemeSettings,
   resetLocalThemeSettings,
   saveLocalThemeSettings,
 } from "@/services/themeSettingsStore";
@@ -734,9 +736,17 @@ export function ThemeManage() {
     retry: 1,
   });
 
+  // 「当前已保存的设置」= 站点预设 + 本机覆盖，和全站读取口径一致。
+  // 只取后端的话，reseed 会在 config 到达后把草稿冲回站点默认值，
+  // 用户会以为自己保存的设置丢了。
+  const localThemeSettings = useLocalThemeSettings();
   const sourceThemeSettings = useMemo(
-    () => normalizeThemeSettings(config?.theme_settings),
-    [config?.theme_settings],
+    () =>
+      normalizeThemeSettings({
+        ...(config?.theme_settings ?? {}),
+        ...localThemeSettings,
+      }),
+    [config?.theme_settings, localThemeSettings],
   );
   // 按内容判断服务端设置是否真的变化，避免同内容 refetch 重置草稿。
   const sourceSignature = useMemo(
@@ -997,7 +1007,9 @@ export function ThemeManage() {
     try {
       // 第三方主题不能写后端设置，这里只保存到浏览器本地；站点级预设仍由后台
       // 「主题自定义配置」的 theme_options 提供。
-      saveLocalThemeSettings({ ...draftThemeSettings });
+      // 合并进已有的本地设置：配色选择器写的 metricColors / darkDepth 不归本页管，
+      // 整体覆盖会把它们一起抹掉。
+      saveLocalThemeSettings({ ...getLocalThemeSettings(), ...draftThemeSettings });
       if (editVersionRef.current === submittedEditVersion) {
         setMessage("主题设置已保存到本机浏览器");
       }
@@ -1018,6 +1030,8 @@ export function ThemeManage() {
   /** 清掉本地覆盖，回到后端 theme_options + 主题默认值。 */
   const handleRestoreSiteDefaults = () => {
     resetLocalThemeSettings();
+    // 表单同步回站点默认值：否则会留下一份"已被清除但仍显示"的脏草稿。
+    seedDrafts(normalizeThemeSettings(config?.theme_settings));
     setMessage("已清除本机设置，恢复站点默认值");
     setError(null);
   };

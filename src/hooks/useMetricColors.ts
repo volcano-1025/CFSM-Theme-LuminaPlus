@@ -184,16 +184,21 @@ export function readEffectiveColors(): Record<MetricColorKey, string> {
 /** 全局：把后端保存的配色应用到所有访客（在 AppShell 挂载一次）。 */
 export function useMetricColorsSync() {
   const { data: config } = usePublicConfig();
+  const localSettings = useLocalThemeSettings();
+  // 与主题设置同样的口径：站点预设打底，本机覆盖在上。
+  // 只读后端会把访客本机保存的配色冲掉（刷新即丢失）。
   const palette = useMemo(
-    () => (config ? readPaletteDraft(config.theme_settings) : null),
-    [config],
+    () => readPaletteDraft({ ...(config?.theme_settings ?? {}), ...localSettings }),
+    [config?.theme_settings, localSettings],
   );
+  // 站点预设可能定义了配色，config 到达前先保留 index.html 的首帧缓存；
+  // 但本机已有覆盖时可以立即应用，不必等网络。
+  const ready = config != null || Object.keys(localSettings).length > 0;
   useEffect(() => {
-    // 配置返回前保留 index.html 恢复的首帧缓存。
-    if (!palette) return;
+    if (!ready) return;
     if (metricColorEditing) return;
     applyPalette(palette);
-  }, [palette]);
+  }, [palette, ready]);
 }
 
 /** 编辑配色：即时预览并写入本机的主题设置。 */
