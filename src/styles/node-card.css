@@ -1,0 +1,637 @@
+/* 大卡、小卡与迷你卡共用的运维面板基底。层级依赖表面色与描边，不使用阴影、顶光或悬浮位移。 */
+.server-card,
+.compact-node-card,
+.mini-node-card {
+  position: relative;
+  background: var(--surface-a);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  content-visibility: auto;
+  box-shadow: none;
+  overflow: hidden;
+}
+.server-card {
+  contain-intrinsic-size: auto 438px;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+.server-card::before,
+.compact-node-card::before,
+.mini-node-card::before {
+  content: none;
+}
+.server-card:hover,
+.compact-node-card:hover,
+.mini-node-card:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--hover-bg-a) 38%, var(--surface-a));
+}
+
+.server-card.is-offline,
+.compact-node-card.is-offline,
+.mini-node-card.is-offline {
+  background: color-mix(in srgb, var(--status-offline) 5%, var(--surface-a));
+  border-color: color-mix(in srgb, var(--status-offline) 48%, var(--border));
+  box-shadow: none;
+}
+
+.server-card-content {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 15px;
+  gap: 14px;
+}
+
+.server-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.server-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.server-card-title-block {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.server-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-card-title-link {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  transition: color 160ms ease;
+}
+.server-card-title-link:hover {
+  color: var(--progress-cpu);
+}
+
+.server-card.is-offline .server-card-title-link,
+.server-card.is-offline .server-card-title-link:hover {
+  color: color-mix(in srgb, var(--status-offline) 72%, var(--text-primary) 28%);
+}
+
+.server-card-detail-link {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 0;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    outline-color 160ms ease;
+}
+.server-card-detail-link:hover {
+  color: var(--progress-cpu);
+  background: var(--fill-tertiary);
+}
+
+.server-card-subtitle {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 22px;
+  align-items: center;
+  margin: 0;
+  border-radius: 8px;
+  background: var(--tag-gray-bg);
+  padding: 0.28rem 0.58rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tag-gray-fg);
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.server-card-subtitle-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* V4/V6 双栈标识药丸：仅字样（不显示真实 IP）。data-tag="green" 复用绿色标签的 token，与标签统一 */
+.ip-stack-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 22px;
+  padding: 0 0.5rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--tag-fg) 14%, transparent);
+  background: var(--tag-bg);
+  color: var(--tag-fg);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.server-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.server-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 20px;
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.metric-detail {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 13px;
+  align-items: center;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 560;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 0;
+}
+
+.metric-detail[data-empty="true"] {
+  opacity: 0;
+}
+
+.metric-track {
+  height: 8px;
+  min-width: 0;
+}
+
+.metric-track-canvas {
+  display: block;
+  width: 100%;
+  height: 8px;
+}
+
+/* 大卡分区使用一套连续节奏，避免每个数据块都变成小卡片。 */
+.server-card-stack > .card-metric-section + .card-metric-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.server-traffic-section {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.traffic-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.traffic-stat-head,
+.traffic-stat-foot,
+.server-health-head,
+.server-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.traffic-stat-label,
+.server-health-label,
+.server-card-meta-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.traffic-stat-value {
+  flex: 0 0 auto;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.traffic-stat-trend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.traffic-dot-strip {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: 10px;
+}
+
+.traffic-stat-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.traffic-stat-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+}
+
+.traffic-stat-live[data-live="false"] {
+  color: var(--status-offline);
+}
+
+.traffic-stat-live[data-live="false"] .traffic-stat-live-dot {
+  animation: none;
+  opacity: 0.6;
+}
+
+.traffic-stat-unit,
+.server-health-unit,
+.server-card-meta-unit {
+  margin-left: 2px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.server-health-empty {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.server-health-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 16px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-elev) 56%, transparent);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.traffic-stat-foot {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.traffic-stat-total-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 流量配额:label + 剩余在左、used/limit 在右,单行;下方为 18 个 .traffic-quota-segment
+   分段,每段按位置由 trafficQuotaSegmentColor() 内联着色,点亮范围取决于 used fraction。 */
+.traffic-quota {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.traffic-quota-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.traffic-quota-label {
+  display: inline-flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.traffic-quota-label svg {
+  flex: 0 0 auto;
+  align-self: center;
+  color: inherit;
+}
+
+/* 剩余值与 used/limit 文本同样式(同字号/字重/弱化色、不加粗),让整行不喧宾夺
+   主,heat 配色只由进度条承载。 */
+.traffic-quota-remain {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.traffic-quota-usage {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 560;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-quota-track {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 每段一个纯色块,按其绝对位置着色(green→amber→red);used 比例到达则上色,否则
+   用中性轨道色 —— 由 NodeTrafficQuota 经 trafficQuotaSegmentColor() 内联设置。用纯色
+   块(而非平滑 gradient)得到清晰的阶梯式油表读数;2px flex gap 即段间间隙。 */
+.traffic-quota-segment {
+  flex: 1;
+  min-width: 0;
+  border-radius: 2px;
+}
+
+.server-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+/* 三网模式沿用单线路“延迟 / 丢包”双图语义：左右按指标分组、每列三行线路，
+   分桶颜色表达真实延迟与丢包状态。 */
+.multi-ping-status {
+  min-width: 0;
+}
+
+.multi-ping-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.multi-ping-metric-column {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.multi-ping-metric-row {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.multi-ping-metric-head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.multi-ping-metric-head.is-value-only {
+  justify-content: flex-end;
+}
+
+.multi-ping-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 640;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-ping-value {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 720;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.multi-ping-value small {
+  margin-left: 2px;
+  color: var(--text-tertiary);
+  font-size: 8.5px;
+  font-weight: 540;
+}
+
+.multi-ping-buckets {
+  position: relative;
+  display: block;
+  min-width: 0;
+  height: 11px;
+}
+
+.multi-ping-buckets .health-bar-row {
+  height: 100%;
+}
+
+.multi-ping-status.is-compact {
+  display: block;
+}
+
+.multi-ping-status.is-compact .multi-ping-columns {
+  gap: 14px;
+}
+
+.multi-ping-status.is-compact .multi-ping-metric-column {
+  gap: 6px;
+}
+
+.multi-ping-status.is-compact .multi-ping-buckets {
+  height: 9px;
+}
+
+.server-health-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-health-chart-wrap {
+  position: relative;
+}
+
+.server-health-value,
+.server-card-meta-value {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 640;
+  letter-spacing: -0.03em;
+}
+
+.health-bar-row {
+  display: block;
+  width: 100%;
+  height: 16px;
+}
+
+.server-card-footer {
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.server-card-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+/* 标签行 — 无上边框,pill 紧贴 footer meta 行之后 */
+.dstatus-tags-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0.375rem;
+  overflow: hidden;
+  padding-top: 0.125rem;
+}
+
+.dstatus-tags-measure {
+  position: absolute;
+  top: 0;
+  left: -9999px;
+  width: max-content;
+  overflow: visible;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.dstatus-tag-chip {
+  /* 可收缩:单个超宽标签(无标签能完整放下时保留)会省略号截断到行宽而非溢出;
+     能放下的标签永不收缩,因为 measure 阶段已保证其总宽度放得下。 */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 10rem;
+  border-radius: 8px;
+  padding: 0.38rem 0.62rem;
+  font-size: 11px;
+  line-height: 1.15;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.01em;
+}
+
+.dstatus-price-chip {
+  /* 用可收缩(非 0 0 auto)配合 min-width:0 + overflow:hidden,让窄行优雅裁剪它,
+     而不是被父级 overflow:hidden 切成一块没内容的背景块。 */
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  /* 先 rgba() 兜底、后 color-mix() 覆盖:不支持 color-mix() 的浏览器(老 WebKit)
+     仍得到可读的绿色 pill,现代浏览器则用主题自适应的 mix。 */
+  border: 1px solid rgba(47, 158, 101, 0.22);
+  border: 1px solid color-mix(in srgb, var(--status-success) 18%, transparent);
+  border-radius: 8px;
+  background: rgba(47, 158, 101, 0.1);
+  background: color-mix(in srgb, var(--status-success) 10%, var(--surface-elev));
+  color: var(--status-success);
+  padding: 0.38rem 0.62rem;
+  font-size: 11px;
+  line-height: 1.15;
+  font-weight: 720;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.dstatus-price-chip svg {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  .server-card-content {
+    padding: 16px;
+  }
+
+  .server-card-title-link {
+    font-size: 15px;
+  }
+
+  .server-traffic-section,
+  .server-health-grid,
+  .server-card-meta-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}

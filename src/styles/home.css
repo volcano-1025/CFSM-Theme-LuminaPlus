@@ -1,0 +1,1056 @@
+/* 首页品牌铭牌：只保留站点名，绝对定位到 AppShell 已经存在的顶部留白里。 */
+.home-brand {
+  position: absolute;
+  top: -14px;
+  left: 0;
+  z-index: 30;
+  display: flex;
+  height: 36px;
+  max-width: min(38rem, calc(100vw - 10rem));
+  align-items: center;
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease,
+    visibility 160ms ease;
+}
+
+.home-brand-title {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  padding: 2px 20px 3px 0;
+  font-size: clamp(18px, 1.5vw, 21px);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .home-brand {
+    max-width: calc(100vw - 8.5rem);
+  }
+
+  .home-brand-title {
+    font-size: 19px;
+  }
+
+}
+
+/* 中小屏的完整快捷栏会占用顶部大部分宽度。由 React 同步显式状态类，兼容
+   Chrome 87，并覆盖平板宽度；折叠后站点名立即恢复。 */
+@media (max-width: 1023px) {
+  .home-dashboard.is-controls-expanded .home-brand {
+    visibility: hidden;
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+
+.home-overview {
+  /* 在线/离线配色,块状与柱状共用一处确保同步;比纯 status 色稍淡,贴合主题。 */
+  --overview-online: color-mix(in srgb, var(--status-success) 72%, transparent);
+  --overview-offline: color-mix(in srgb, var(--status-error) 55%, transparent);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.overview-card {
+  --metric-accent: var(--text-tertiary);
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 112px;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  background:
+    radial-gradient(
+      120% 100% at 0% 0%,
+      color-mix(in srgb, var(--metric-accent) 6%, transparent) 0%,
+      transparent 52%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-elev-a) 96%, white 4%) 0%,
+      var(--surface-a) 100%
+  );
+  padding: 14px 16px;
+}
+
+.overview-card[data-metric="online"] { --metric-accent: var(--status-success); }
+.overview-card[data-metric="traffic"] { --metric-accent: var(--traffic-up); }
+.overview-card[data-metric="bandwidth"] { --metric-accent: var(--speed-high); }
+.overview-card[data-metric="asset"] { --metric-accent: var(--accent-500); }
+
+/* 暗色依靠表面色阶建立层级，不叠白色顶光或指标色氛围。背景图模式仍由 --surface-a
+   保留用户配置的透明度。 */
+:root[data-appearance="dark"] .overview-card {
+  background: var(--surface-a);
+}
+
+.overview-card-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.overview-card-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-card-action {
+  display: grid;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  box-shadow: none;
+  opacity: 0.82;
+  transition:
+    color 160ms ease,
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.overview-card-action:hover {
+  background: transparent;
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.overview-card-action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text-secondary) 54%, transparent);
+  outline-offset: 2px;
+}
+
+.overview-card-action:active {
+  transform: scale(0.94);
+}
+
+/* 续费提醒复用资产入口，不另占首页内容流。平时只露一个轻量角标，弹层覆盖展开，
+   因此不会把概览、筛选或节点卡向下推。 */
+.renewal-reminder {
+  position: relative;
+  z-index: 70;
+  flex: 0 0 auto;
+}
+
+.renewal-reminder-trigger {
+  position: relative;
+}
+
+.renewal-reminder-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--surface-elev);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--status-error) 72%, white 28%);
+  box-sizing: content-box;
+  animation: renewal-reminder-breathe 2.4s ease-in-out infinite;
+}
+
+.renewal-reminder-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1px solid color-mix(in srgb, var(--status-error) 56%, transparent);
+  border-radius: inherit;
+  opacity: 0;
+  transform: scale(0.72);
+  animation: renewal-reminder-ring 2.4s ease-out infinite;
+}
+
+@keyframes renewal-reminder-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes renewal-reminder-ring {
+  0%,
+  24% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  46% {
+    opacity: 0.42;
+  }
+  76%,
+  100% {
+    opacity: 0;
+    transform: scale(1.24);
+  }
+}
+
+.renewal-reminder-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 80;
+  width: min(380px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 68%, transparent);
+  border-radius: 16px;
+  background: var(--surface-elev);
+  box-shadow: 0 20px 46px -24px rgba(15, 23, 42, 0.42);
+  color: var(--text-primary);
+}
+
+.renewal-reminder-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 16px 12px;
+}
+
+.renewal-reminder-title-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.renewal-reminder-title-line h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 760;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.renewal-reminder-count {
+  display: inline-flex;
+  min-width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--status-warning) 16%, transparent);
+  color: color-mix(in srgb, var(--status-warning) 84%, var(--text-primary));
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+}
+
+.renewal-reminder-head p {
+  margin: 6px 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.renewal-reminder-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-tertiary);
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.renewal-reminder-close:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.renewal-reminder-list {
+  display: flex;
+  max-height: 300px;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+
+.renewal-reminder-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  padding: 11px 12px;
+}
+
+.renewal-reminder-row-main {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 12px;
+  row-gap: 5px;
+}
+
+.renewal-reminder-row-main strong {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.renewal-reminder-row-main span {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.renewal-reminder-status {
+  flex: 0 0 auto;
+  border-radius: 7px;
+  padding: 5px 7px;
+  font-size: 10px;
+  font-weight: 720;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.renewal-reminder-status[data-tone="critical"] {
+  background: color-mix(in srgb, var(--status-error) 12%, transparent);
+  color: var(--status-error);
+}
+
+.renewal-reminder-status[data-tone="warning"] {
+  background: color-mix(in srgb, var(--status-warning) 14%, transparent);
+  color: color-mix(in srgb, var(--status-warning) 82%, var(--text-primary));
+}
+
+.renewal-reminder-status[data-tone="success"] {
+  background: color-mix(in srgb, var(--status-success) 12%, transparent);
+  color: var(--status-success);
+}
+
+.renewal-reminder-more {
+  margin: 1px 2px 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.renewal-reminder-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  border-top: 1px solid var(--hairline);
+  padding: 11px 12px 12px;
+}
+
+.renewal-reminder-actions a,
+.renewal-reminder-actions button {
+  min-height: 32px;
+  border-radius: 9px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.renewal-reminder-detail {
+  display: inline-flex;
+  margin-right: auto;
+  align-items: center;
+  color: var(--accent-500);
+}
+
+.renewal-reminder-detail:hover {
+  background: color-mix(in srgb, var(--accent-500) 8%, transparent);
+}
+
+.renewal-reminder-later {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.renewal-reminder-later:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.renewal-reminder-dismiss {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.renewal-reminder-dismiss:hover {
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+}
+
+@media (max-width: 520px) {
+  .renewal-reminder-panel {
+    position: fixed;
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    max-height: min(72vh, 620px);
+    border-radius: 18px;
+  }
+
+  .renewal-reminder-actions {
+    flex-wrap: wrap;
+  }
+
+  .renewal-reminder-detail {
+    flex: 1 0 100%;
+    justify-content: center;
+    margin-right: 0;
+  }
+
+  .renewal-reminder-later,
+  .renewal-reminder-dismiss {
+    flex: 1 1 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .renewal-reminder-dot,
+  .renewal-reminder-dot::after {
+    animation: none;
+  }
+
+  .renewal-reminder-dot {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.overview-card-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.overview-card-value {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--text-primary);
+  font-size: 28px;
+  font-weight: 760;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.overview-card-unit {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* 在线数量是首卡的辅助状态，略小于流量、带宽等核心指标。 */
+.overview-card[data-metric="online"] .overview-card-value {
+  font-size: 24px;
+}
+
+.overview-card[data-metric="online"] .overview-card-unit {
+  font-size: 12px;
+}
+
+.overview-card-sub {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-card-sub-compact {
+  display: none;
+}
+
+.overview-card-footer {
+  display: flex;
+  min-width: 0;
+  margin-top: auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* 底部小字说明(如资产卡的「实时汇率计算」)。 */
+.overview-card-caption {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.overview-card-rating {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 48%;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-card-rating[data-rating-level="0"] {
+  color: color-mix(in srgb, var(--status-success) 72%, var(--text-secondary));
+}
+
+.overview-card-rating[data-rating-level="1"] {
+  color: var(--accent-500);
+}
+
+.overview-card-rating[data-rating-level="2"] {
+  color: var(--progress-memory);
+}
+
+.overview-card-rating[data-rating-level="3"] {
+  color: color-mix(in srgb, #f5b84b 82%, var(--text-primary));
+}
+
+/* 在线条:左绿=在线、右红=离线,中间中性轨道=未知。初始用中性而非红色,避免指标
+   到达前首帧闪红;随后绿/红从两端同时长入。准确的「12 / 14」就在其上方,所以这条
+   只作快速一瞥用。 */
+.overview-bar {
+  display: flex;
+  justify-content: space-between;
+  height: 6px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--progress-bg);
+}
+
+.overview-bar-online,
+.overview-bar-offline {
+  height: 100%;
+  transition: width 320ms ease;
+}
+
+.overview-bar-online {
+  background: var(--overview-online);
+}
+
+.overview-bar-offline {
+  background: var(--overview-offline);
+}
+
+/* 块状版(节点数 5–10):每台一格,规格与主题分段格(MetricBar 的 canvas 分段)
+   一致——10px 高、2px 间隙、2px 圆角、内阴影,读作有厚度的格子而非切条。颜色与
+   .overview-bar-online/offline 同源,保持同步;默认格为中性底色,只有真离线才变红,避免条状那种「首帧闪红」。 */
+.overview-blocks {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  width: 100%;
+}
+
+.overview-block {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--progress-bg);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.18);
+  transition: background 320ms ease;
+}
+
+.overview-block.is-online {
+  background: var(--overview-online);
+}
+
+.overview-block.is-offline {
+  background: var(--overview-offline);
+}
+
+.home-group-tabs {
+  display: flex;
+  /* 渲染在与卡片网格对齐的 grid 里(见 NodeGrid),正好占一个卡片列、边缘与首张卡
+     对齐。min-width:0 让它能在列内收缩,使溢出的 tab 组改为滚动。 */
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 54%, transparent);
+  border-radius: 16px;
+  background: var(--surface-a);
+  box-shadow:
+    0 14px 30px -26px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 color-mix(in srgb, white 16%, transparent);
+  padding: 5px;
+}
+
+.home-group-tabs button {
+  display: inline-flex;
+  /* 有空间时均分宽度、从不收缩(溢出时滚动而非挤压)。max-width 上限防止单个长组名
+     独占,同时仍够宽,保证 2 个 tab 也能填满一张卡。 */
+  flex: 1 0 auto;
+  min-height: 32px;
+  max-width: 240px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--text-secondary);
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.home-group-tabs button:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--hover-bg-a) 72%, transparent);
+}
+
+/* 激活 tab 的描边+浮起阴影与费用抽屉的排序 tab(cost-summary.css 的 .cost-summary-sort-tab)
+   完全一致,组选择器只定义这一处;背景与文字色两处风格不同(费用抽屉用硬编码固定色,且暗色下
+   不另配阴影),仍各自定义。 */
+.home-group-tabs button[data-active="true"],
+.home-region-chip[data-active="true"],
+.cost-summary-sort-tab[data-active="true"] {
+  border-color: rgba(82, 82, 91, 0.28);
+  box-shadow:
+    0 10px 22px -18px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(82, 82, 91, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+[data-appearance="dark"] .home-group-tabs button[data-active="true"],
+[data-appearance="dark"] .home-region-chip[data-active="true"],
+[data-appearance="dark"] .cost-summary-sort-tab[data-active="true"] {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.home-group-tabs button[data-active="true"],
+.home-region-chip[data-active="true"] {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-elev-a) 96%, white 4%) 0%,
+      color-mix(in srgb, var(--hover-bg-a) 54%, var(--surface-a)) 100%
+    );
+  color: var(--text-primary);
+}
+
+[data-appearance="dark"] .home-group-tabs button[data-active="true"],
+[data-appearance="dark"] .home-region-chip[data-active="true"] {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-elev-a) 94%, white 6%) 0%,
+      color-mix(in srgb, var(--hover-bg-a) 48%, var(--surface-a)) 100%
+    );
+  box-shadow:
+    0 10px 22px -18px rgba(0, 0, 0, 0.72),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+@media (max-width: 1100px) {
+  .home-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  /* 2 列布局已由上面 1100px 断点给出,这里只收紧间距。 */
+  .home-overview {
+    gap: 10px;
+  }
+
+  .overview-card {
+    min-height: 100px;
+    border-radius: 14px;
+    padding: 12px 13px;
+    gap: 8px;
+  }
+
+  .overview-card-value {
+    font-size: 24px;
+  }
+
+  .overview-card[data-metric="online"] .overview-card-value {
+    font-size: 21px;
+  }
+
+  .overview-card[data-metric="online"] .overview-card-unit {
+    font-size: 11px;
+  }
+
+  .overview-card-footer {
+    gap: 6px;
+  }
+
+  .overview-card-sub {
+    font-size: 11px;
+    font-weight: 620;
+  }
+
+  .overview-card-sub-full {
+    display: none;
+  }
+
+  .overview-card-sub-compact {
+    display: inline;
+  }
+
+  .overview-card-rating {
+    flex: 0 0 auto;
+    max-width: 5.5em;
+    font-size: 11px;
+  }
+
+  .overview-card-caption {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 560px) {
+  .home-group-tabs {
+    width: 100%;
+    border-radius: 14px;
+  }
+
+  .home-group-tabs button {
+    min-height: 30px;
+    max-width: 200px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+}
+
+/* 地区筛选栏:与分组栏同一套面板视觉(surface-a + 描边 + 圆角 + 浮起阴影);国旗 chip 换行铺开。
+   chip 的悬停/选中态与分组 tab、费用抽屉排序 tab 共用同一组样式。 */
+.home-region-bar {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 54%, transparent);
+  border-radius: 16px;
+  background: var(--surface-a);
+  box-shadow:
+    0 14px 30px -26px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 color-mix(in srgb, white 16%, transparent);
+}
+
+.home-region-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-region-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.home-region-chip:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--hover-bg-a) 72%, transparent);
+}
+
+.home-region-chip-code {
+  letter-spacing: 0.02em;
+}
+
+/* 数量角标:圆角小胶囊,选中时不额外变色,靠 chip 整体高亮即可。 */
+.home-region-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--border-strong) 22%, transparent);
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-region-chip[data-active="true"] .home-region-chip-count {
+  background: color-mix(in srgb, var(--accent-500) 20%, transparent);
+  color: var(--text-secondary);
+}
+
+@media (max-width: 560px) {
+  .home-region-chip {
+    min-height: 30px;
+    padding: 0 8px;
+  }
+}
+
+/* 首页顶部为 36px 快捷设置按钮保留最小 48px 控制区：上下各约 6px。
+   iOS PWA 的状态栏安全区由 app-main 统一叠加。 */
+.home-dashboard {
+  padding-top: 28px;
+}
+
+/* 首页控件条复用卡片网格列定义：分组标签落在第一列，排序控件钉在最后一列。 */
+.home-controls-bar {
+  align-items: center;
+}
+
+.home-sort {
+  position: relative;
+}
+
+.home-controls-bar .home-sort {
+  grid-column: -2 / -1;
+  justify-self: end;
+  align-self: center;
+}
+
+.home-sort-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 54%, transparent);
+  border-radius: 14px;
+  background: var(--surface-a);
+  box-shadow:
+    0 14px 30px -26px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 color-mix(in srgb, white 16%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.home-sort-trigger svg {
+  display: block;
+  flex: none;
+}
+
+.home-sort-trigger:hover,
+.home-sort-trigger[aria-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--hover-bg-a) 60%, var(--surface-a));
+}
+
+/* panel/item 骨架及 hover/激活态与实例切换器共享,见 surface.css 的弹出菜单组选择器;
+   这里只保留排序浮层的差异项。 */
+.home-sort-panel {
+  right: 0;
+  min-width: 180px;
+  /* 移动端不超出视口 */
+  max-width: min(260px, calc(100vw - 32px));
+}
+
+.home-sort-item {
+  gap: 8px;
+}
+
+.home-sort-item-label {
+  flex: 1 1 auto;
+}
+
+.home-sort-item svg {
+  display: block;
+  flex: none;
+}
+
+.home-sort-item[data-active="true"] svg {
+  color: var(--accent-500);
+}
+
+/* 移动端让分组与排序并排；分组可横向滚动，排序保持在右侧。 */
+@media (max-width: 768px) {
+  .home-controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .home-controls-bar .home-group-tabs {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+  }
+
+  .home-controls-bar .home-sort {
+    grid-column: auto;
+    align-self: auto;
+    flex: 0 0 auto;
+    margin-inline-start: auto;
+  }
+}
+
+@media (min-width: 1024px) {
+  .home-brand {
+    top: -18px;
+  }
+
+  .home-dashboard {
+    padding-top: 24px;
+  }
+}
+
+/* 迷你档最多 5 列，但任何断点都不允许卡片窄于 260px；断点按页面实际 gutter
+   和列间距反推，避免 1280px 左右被固定列数压到 216px。 */
+.node-grid-mini {
+  grid-template-columns: repeat(5, minmax(var(--mini-card-min-width, 260px), 1fr));
+}
+
+@media (max-width: 1440px) {
+  .node-grid-mini {
+    grid-template-columns: repeat(4, minmax(var(--mini-card-min-width, 260px), 1fr));
+  }
+}
+
+@media (max-width: 1150px) {
+  .node-grid-mini {
+    grid-template-columns: repeat(3, minmax(var(--mini-card-min-width, 260px), 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .node-grid-mini {
+    grid-template-columns: repeat(2, minmax(var(--mini-card-min-width, 260px), 1fr));
+  }
+}
+
+@media (max-width: 580px) {
+  .node-grid-mini {
+    grid-template-columns: minmax(min(100%, var(--mini-card-min-width, 260px)), 1fr);
+  }
+}
+
+/* 迷你与列表档总览卡使用密集变体。 */
+.home-overview.is-dense {
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.home-overview.is-dense .overview-card {
+  min-height: 0;
+  gap: 6px;
+  border-radius: 12px;
+  padding: 10px 13px;
+}
+
+.home-overview.is-dense .overview-card-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.home-overview.is-dense .overview-card-value {
+  font-size: 21px;
+}
+
+.home-overview.is-dense .overview-card-unit {
+  font-size: 11px;
+}
+
+.home-overview.is-dense .overview-card[data-metric="online"] .overview-card-value {
+  font-size: 19px;
+}
+
+.home-overview.is-dense .overview-card[data-metric="online"] .overview-card-unit {
+  font-size: 10px;
+}
+
+.home-overview.is-dense .overview-card-action {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+}

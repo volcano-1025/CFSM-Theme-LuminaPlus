@@ -1,0 +1,31 @@
+/* 统一监控读数的字形和等宽数字特性。 */
+.tabular,
+.overview-card-value,
+.overview-card-unit,
+.home-region-chip-count,
+.traffic-stat-value,
+.traffic-stat-unit,
+.traffic-quota-remain,
+.traffic-quota-usage,
+.server-health-value,
+.server-card-meta-value,
+.server-card-meta-unit,
+.compact-node-gauge strong,
+.compact-node-health-value,
+.compact-node-info-row-value,
+.compact-node-traffic-value,
+.compact-node-traffic-uptime,
+.assets-hero-value,
+.assets-hero-currency,
+.traffic-summary-total,
+.traffic-summary-peak-main strong,
+.traffic-volume-value strong,
+.traffic-peak-value strong,
+.traffic-node-card-head > strong,
+.instance-series-stats,
+.instance-chart-meta strong,
+.instance-chart-range-chip,
+.instance-chart-tooltip-row strong {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
