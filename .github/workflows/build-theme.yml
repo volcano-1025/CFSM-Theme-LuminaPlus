@@ -1,0 +1,72 @@
+name: Build theme
+
+# 源码在 main，构建产物（index.html + assets/）自动发布到 dist 分支。
+# 主题安装地址就填 dist 分支：
+#   https://github.com/<owner>/<repo>/tree/dist
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 连续推送时只保留最后一次构建，避免两个 job 抢着 force-push dist。
+concurrency:
+  group: build-theme
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # 主题目录只允许 index.html 和 assets/，构建配置若被改坏要在这里拦下来。
+      - name: Verify build output
+        run: |
+          test -f dist/index.html || { echo "缺少 dist/index.html"; exit 1; }
+          test -d dist/assets || { echo "缺少 dist/assets/"; exit 1; }
+          unexpected="$(find dist -mindepth 1 -maxdepth 1 ! -name index.html ! -name assets)"
+          if [ -n "$unexpected" ]; then
+            echo "产物里出现了不允许的顶层文件："
+            echo "$unexpected"
+            exit 1
+          fi
+
+      - name: Publish to dist branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd dist
+          # dist 分支是纯产物，每次重建覆盖，不保留历史。
+          git init -q -b dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "build: ${GITHUB_SHA::7}"
+          git push -q --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            dist:dist
+          echo "已发布到 dist 分支：${GITHUB_SHA::7}"
