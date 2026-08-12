@@ -110,7 +110,10 @@ export function buildPingOverviewItem(
   const emptyTimes: number[] = [];
   let max = 1;
   let lastValue: number | null = null;
-  let loss: number | null = null;
+  // 丢包率取整段窗口的加权平均，和柱状图同源（缓冲区本身就只保留一小时）。
+  // 取最后一个样本会让「6 个包丢 1 个」这种单次抖动直接顶成 16%，而柱子还是全绿。
+  let lostSum = 0;
+  let lossWeight = 0;
 
   for (const sample of samples) {
     const value = sample.ping[carrier];
@@ -128,7 +131,12 @@ export function buildPingOverviewItem(
     });
     if (value > max) max = value;
     if (value >= 0) lastValue = value;
-    if (typeof sampleLoss === "number") loss = sampleLoss;
+    // 后端没给丢包值时不参与平均，否则会把「不知道」显示成 0%。
+    if (typeof sampleLoss === "number" || value < 0) {
+      const counts = resolvePingSampleCounts({ value, count: 1, loss: sampleLoss });
+      lostSum += counts.lost;
+      lossWeight += counts.total;
+    }
   }
 
   return {
@@ -142,7 +150,7 @@ export function buildPingOverviewItem(
     samples: out,
     emptyTimes,
     max,
-    loss,
+    loss: lossWeight > 0 ? (lostSum / lossWeight) * 100 : null,
   };
 }
 

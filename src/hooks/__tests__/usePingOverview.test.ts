@@ -30,14 +30,36 @@ describe("buildPingOverviewItem", () => {
     expect(buildPingOverviewItem("node-a", 4, samples).lastValue).toBe(20);
   });
 
-  it("carries the per-sample loss through and reports the latest one", () => {
+  it("carries the per-sample loss through and averages it over the window", () => {
+    // 卡片上的丢包率跟原版一样是整段窗口的平均，不是最后一次采样 ——
+    // 否则一次抖动就把数字顶上去，下面的柱子却还是全绿。
     const item = buildPingOverviewItem("node-a", 1, [
       sample(3, { ct: 30, lossCt: 0 }),
       sample(1, { ct: 40, lossCt: 25 }),
     ]);
 
     expect(item.samples.map((entry) => entry.loss)).toEqual([0, 25]);
-    expect(item.loss).toBe(25);
+    expect(item.loss).toBeCloseTo(12.5, 5);
+    // 延迟数字仍然是最新值。
+    expect(item.lastValue).toBe(40);
+  });
+
+  it("leaves the loss empty when the backend never reports it", () => {
+    const item = buildPingOverviewItem("node-a", 1, [
+      sample(3, { ct: 30 }),
+      sample(1, { ct: 40 }),
+    ]);
+
+    expect(item.loss).toBeNull();
+  });
+
+  it("keeps one spike from dominating the hour", () => {
+    // 一小时 30 个点里有一个 100%，卡片应显示约 3.3%，不是 100%。
+    const samples = Array.from({ length: 30 }, (_, index) =>
+      sample(59 - index * 2, { ct: 40, lossCt: index === 29 ? 100 : 0 }),
+    );
+
+    expect(buildPingOverviewItem("node-a", 1, samples).loss).toBeCloseTo(100 / 30, 5);
   });
 
   it("skips samples where the carrier has no measurement", () => {
