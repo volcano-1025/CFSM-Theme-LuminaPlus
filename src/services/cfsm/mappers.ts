@@ -1,3 +1,4 @@
+import type { PingLiveSample } from "@/services/pingLiveStore";
 import {
   CfsmServerSchema,
   EMPTY_CARRIER_PING,
@@ -258,6 +259,45 @@ export function carrierPingFromServer(server: CfsmServer): CarrierPingSnapshot {
     lossCm: toNullableNumber(server.loss_cm),
     lossBd: toNullableNumber(server.loss_bd),
   };
+}
+
+/**
+ * Workers 2.8.3 Beta2 起，`/api/servers` 直接给出每台节点最近一小时的探测窗口：
+ * 30 个槽位、每 2 分钟一个，`ping` 与 `loss` 两个数组按时间戳对应。
+ *
+ * 有它就不必再靠浏览器慢慢累积，首屏就是完整的一小时；旧版后端没有这两个字段，
+ * 返回空数组，调用方回落到实时累积。
+ */
+export function parseLatencyWindow(server: CfsmServer): PingLiveSample[] {
+  const pingPoints = Array.isArray(server.ping) ? server.ping : [];
+  if (pingPoints.length === 0) return [];
+
+  const lossByTs = new Map<number, (typeof pingPoints)[number]>();
+  for (const point of Array.isArray(server.loss) ? server.loss : []) {
+    const time = normalizeTimestamp(point.ts);
+    if (time > 0) lossByTs.set(time, point);
+  }
+
+  const out: PingLiveSample[] = [];
+  for (const point of pingPoints) {
+    const time = normalizeTimestamp(point.ts);
+    if (time <= 0) continue;
+    const loss = lossByTs.get(time);
+    out.push({
+      time,
+      ping: {
+        ct: point.ct ?? null,
+        cu: point.cu ?? null,
+        cm: point.cm ?? null,
+        bd: point.bd ?? null,
+        lossCt: loss?.ct ?? null,
+        lossCu: loss?.cu ?? null,
+        lossCm: loss?.cm ?? null,
+        lossBd: loss?.bd ?? null,
+      },
+    });
+  }
+  return out.sort((left, right) => left.time - right.time);
 }
 
 function sameCarrierPing(a: CarrierPingSnapshot, b: CarrierPingSnapshot): boolean {

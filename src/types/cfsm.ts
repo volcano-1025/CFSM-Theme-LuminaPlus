@@ -52,6 +52,24 @@ export const GpuEntrySchema = z
 export type GpuEntry = z.output<typeof GpuEntrySchema>;
 
 /**
+ * `/api/servers` 下发的一小时探测窗口中的一个点。
+ *
+ * 固定 30 个槽位、每 2 分钟一个，`ping` 与 `loss` 各一个数组。
+ * 线路值可能是 `false`（该节点禁用了这条线路），这里统一归一成 null。
+ */
+export const LatencyPointSchema = z
+  .object({
+    ts: looseNumber.default(0),
+    ct: nullableNumber,
+    cu: nullableNumber,
+    cm: nullableNumber,
+    bd: nullableNumber,
+  })
+  .passthrough();
+
+export type LatencyPoint = z.output<typeof LatencyPointSchema>;
+
+/**
  * `/api/servers` 与 `/api/server` 的服务器对象。
  *
  * 单位约定（与后端一致）：`ram_*` / `swap_*` / `disk_*` 为 MiB，网络速率与累计量为字节，
@@ -95,6 +113,9 @@ export const CfsmServerSchema = z
     loss_cu: nullableNumber,
     loss_cm: nullableNumber,
     loss_bd: nullableNumber,
+    // Workers 2.8.3 Beta2 起下发的一小时探测窗口；旧版本没有这两个字段。
+    ping: z.array(LatencyPointSchema).optional(),
+    loss: z.array(LatencyPointSchema).optional(),
 
     ram_total: looseNumber.default(0),
     ram_used: looseNumber.default(0),

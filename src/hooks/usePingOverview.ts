@@ -6,7 +6,7 @@ import {
   subscribePingHistory,
   type PingLiveSample,
 } from "@/services/pingLiveStore";
-import { CARRIER_TASK_BY_ID } from "@/services/cfsm/mappers";
+import { CARRIER_TASK_BY_ID, inferIntervalSeconds } from "@/services/cfsm/mappers";
 import type {
   CarrierKey,
   HomepagePingLine,
@@ -31,8 +31,24 @@ import type { NodeViewMode } from "@/utils/themeSettings";
 
 // 首页延迟图表最多显示 24 个 bucket。
 const MAX_VISIBLE_HOMEPAGE_PING_BUCKETS = 24;
-/** 上报间隔未知时的兜底，用于把样本投影到 bucket。 */
+/** 样本间隔推不出来时的兜底，用于把样本投影到 bucket。 */
 const DEFAULT_SAMPLE_INTERVAL_MS = 60_000;
+/** 后端窗口是 2 分钟一个槽位，本地累积约 50 秒一个；限制在这个区间内。 */
+const MIN_SAMPLE_INTERVAL_MS = 20_000;
+const MAX_SAMPLE_INTERVAL_MS = 300_000;
+
+/**
+ * 样本间隔由数据自己决定：后端一小时窗口是 120 秒一个点，本地累积约 50 秒一个。
+ * 写死一个值会让其中一种来源的柱子落位偏移。
+ */
+function resolveSampleIntervalMs(samples: readonly PingLiveSample[]): number {
+  const seconds = inferIntervalSeconds(samples.map((sample) => sample.time));
+  if (!seconds) return DEFAULT_SAMPLE_INTERVAL_MS;
+  return Math.min(
+    MAX_SAMPLE_INTERVAL_MS,
+    Math.max(MIN_SAMPLE_INTERVAL_MS, seconds * 1000),
+  );
+}
 
 const EMPTY_PING: PingOverviewItem = {
   client: "",
@@ -79,7 +95,7 @@ export function buildPingOverviewItem(
   client: string,
   taskId: number,
   samples: readonly PingLiveSample[],
-  sampleIntervalMs = DEFAULT_SAMPLE_INTERVAL_MS,
+  sampleIntervalMs?: number,
 ): PingOverviewItem {
   const task = CARRIER_TASK_BY_ID.get(taskId);
   if (!task || samples.length === 0) {
@@ -115,7 +131,7 @@ export function buildPingOverviewItem(
     isAssigned: out.length > 0,
     loadState: "ready",
     lastValue,
-    metricIntervalMs: sampleIntervalMs,
+    metricIntervalMs: sampleIntervalMs ?? resolveSampleIntervalMs(samples),
     samples: out,
     max,
     loss,
@@ -126,7 +142,7 @@ function getCachedItem(
   client: string,
   taskId: number,
   samples: readonly PingLiveSample[],
-  sampleIntervalMs: number,
+  sampleIntervalMs?: number,
 ): PingOverviewItem {
   if (samples.length === 0) {
     return buildPingOverviewItem(client, taskId, samples, sampleIntervalMs);
@@ -150,7 +166,7 @@ function getCachedLines(
   client: string,
   taskIds: number[],
   samples: readonly PingLiveSample[],
-  sampleIntervalMs: number,
+  sampleIntervalMs?: number,
 ): HomepagePingLine[] {
   if (taskIds.length === 0) return EMPTY_PING_LINES;
   const key = taskIds.join(",");
@@ -215,7 +231,7 @@ export function useNodePingOverview(uuid: string, enabled = true): PingOverviewI
   return useMemo(
     () =>
       enabled
-        ? getCachedItem(uuid, taskId, samples, DEFAULT_SAMPLE_INTERVAL_MS)
+        ? getCachedItem(uuid, taskId, samples)
         : EMPTY_PING,
     [enabled, samples, taskId, uuid],
   );
@@ -230,12 +246,7 @@ export function useNodePingOverviewLines(
   return useMemo(
     () =>
       enabled
-        ? getCachedLines(
-            uuid,
-            homepageMultiPingTaskIds,
-            samples,
-            DEFAULT_SAMPLE_INTERVAL_MS,
-          )
+        ? getCachedLines(uuid, homepageMultiPingTaskIds, samples)
         : EMPTY_PING_LINES,
     [enabled, homepageMultiPingTaskIds, samples, uuid],
   );

@@ -5,7 +5,9 @@ import {
   recordPingSample,
   resetPingLiveStore,
   retainPingNodes,
+  seedPingHistory,
   subscribePingHistory,
+  type PingLiveSample,
 } from "@/services/pingLiveStore";
 import { EMPTY_CARRIER_PING, type CarrierPingSnapshot } from "@/types/cfsm";
 
@@ -161,6 +163,75 @@ describe("persistence", () => {
     resetPingLiveStore();
 
     expect(getPingHistorySnapshot("node-a")).toEqual([]);
+  });
+});
+
+describe("seedPingHistory", () => {
+  /** 后端窗口：30 个点、每 2 分钟一个，覆盖最近一小时。 */
+  function backendWindow(): PingLiveSample[] {
+    return Array.from({ length: 30 }, (_, index) => ({
+      time: NOW - (29 - index) * 120_000,
+      ping: ping({ ct: 30 + index, lossCt: 0 }),
+    }));
+  }
+
+  it("fills a whole hour on the first load, without accumulating", () => {
+    seedPingHistory("node-a", backendWindow());
+
+    const samples = getPingHistorySnapshot("node-a");
+    expect(samples).toHaveLength(30);
+    expect(samples.at(-1)!.time - samples[0]!.time).toBe(29 * 120_000);
+  });
+
+  it("keeps live samples that are newer than the window", () => {
+    seedPingHistory("node-a", backendWindow());
+    recordPingSample("node-a", NOW + 60_000, ping({ ct: 99 }));
+    // 下一次 /api/servers 返回同一个窗口时，不能把这个更新的点冲掉。
+    seedPingHistory("node-a", backendWindow());
+
+    const samples = getPingHistorySnapshot("node-a");
+    expect(samples).toHaveLength(31);
+    expect(samples.at(-1)?.ping.ct).toBe(99);
+  });
+
+  it("does not notify subscribers when the window is unchanged", () => {
+    seedPingHistory("node-a", backendWindow());
+    const listener = vi.fn();
+    subscribePingHistory("node-a", listener);
+
+    seedPingHistory("node-a", backendWindow());
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("notifies when the window advances", () => {
+    seedPingHistory("node-a", backendWindow());
+    const listener = vi.fn();
+    subscribePingHistory("node-a", listener);
+
+    seedPingHistory("node-a", [
+      ...backendWindow().slice(1),
+      { time: NOW + 120_000, ping: ping({ ct: 77 }) },
+    ]);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(getPingHistorySnapshot("node-a").at(-1)?.ping.ct).toBe(77);
+  });
+
+  it("ignores an empty window so an older backend keeps its accumulated data", () => {
+    recordPingSample("node-a", NOW, ping({ ct: 30 }));
+    seedPingHistory("node-a", []);
+
+    expect(getPingHistorySnapshot("node-a")).toHaveLength(1);
+  });
+
+  it("drops window points that already fell out of the hour", () => {
+    seedPingHistory("node-a", [
+      { time: NOW - 3 * 60 * 60_000, ping: ping({ ct: 10 }) },
+      { time: NOW, ping: ping({ ct: 20 }) },
+    ]);
+
+    expect(getPingHistorySnapshot("node-a").map((s) => s.ping.ct)).toEqual([20]);
   });
 });
 

@@ -71,6 +71,23 @@ describe("buildPingOverviewItem", () => {
     expect(unconfigured.isAssigned).toBe(false);
   });
 
+  it("infers the sample interval from the data instead of assuming one", () => {
+    // 后端窗口是 2 分钟一个点，本地累积约 50 秒一个；柱子落位要跟着实际间隔走。
+    const backend = buildPingOverviewItem("node-a", 1, [
+      sample(6, { ct: 30 }),
+      sample(4, { ct: 31 }),
+      sample(2, { ct: 32 }),
+    ]);
+    expect(backend.metricIntervalMs).toBe(120_000);
+
+    const local = buildPingOverviewItem("node-a", 1, [
+      { time: NOW - 100_000, ping: { ...EMPTY_CARRIER_PING, ct: 30 } },
+      { time: NOW - 50_000, ping: { ...EMPTY_CARRIER_PING, ct: 31 } },
+      { time: NOW, ping: { ...EMPTY_CARRIER_PING, ct: 32 } },
+    ]);
+    expect(local.metricIntervalMs).toBe(50_000);
+  });
+
   it("is not assigned for an unknown task id", () => {
     expect(buildPingOverviewItem("node-a", 99, [sample(1, { ct: 30 })]).isAssigned).toBe(
       false,

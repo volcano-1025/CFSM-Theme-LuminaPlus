@@ -10,11 +10,16 @@ import {
   emptyNodeMetrics,
   isServerOnline,
   mergeServerPatch,
+  parseLatencyWindow,
   toNodeInfo,
   toNodeMetrics,
 } from "@/services/cfsm/mappers";
 import { createWsConnection, type WsConnection, type WsSample } from "@/services/cfsm/wsClient";
-import { recordPingSample, retainPingNodes } from "@/services/pingLiveStore";
+import {
+  recordPingSample,
+  retainPingNodes,
+  seedPingHistory,
+} from "@/services/pingLiveStore";
 
 type Listener = () => void;
 
@@ -595,7 +600,10 @@ async function performServersSync() {
 
       const prevTrend = state.trafficTrends[uuid] ?? EMPTY_TRAFFIC_TREND;
       const metrics = metricsByUuid[uuid]!;
-      recordPingSample(uuid, metrics.updatedAt, metrics.ping);
+      // 新版后端直接给一小时窗口；旧版没有这个字段，回落到逐点累积。
+      const latencyWindow = parseLatencyWindow(server);
+      if (latencyWindow.length > 0) seedPingHistory(uuid, latencyWindow);
+      else recordPingSample(uuid, metrics.updatedAt, metrics.ping);
       const nextUp = updateTrafficTrendSeries(
         prevTrend.up,
         metrics.netUp,

@@ -153,6 +153,33 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+/** 新版后端在 /api/servers 里直接给的一小时探测窗口：30 个点、每 2 分钟一个。 */
+function buildLatencyWindow(index: number, offline: boolean) {
+  const now = Date.now();
+  const slot = 2 * 60 * 1000;
+  const ping = [];
+  const loss = [];
+  for (let i = 29; i >= 0; i--) {
+    const ts = now - i * slot;
+    const phase = i / 4 + index;
+    ping.push({
+      ts,
+      ct: offline ? null : Math.round(clamp(38 + Math.sin(phase) * 12, 1, 400)),
+      cu: offline ? null : Math.round(clamp(52 + Math.sin(phase + 1) * 18, 1, 400)),
+      cm: offline ? null : Math.round(clamp(74 + Math.sin(phase + 2) * 26, 1, 400)),
+      bd: offline ? null : Math.round(clamp(21 + Math.sin(phase + 3) * 9, 1, 400)),
+    });
+    loss.push({
+      ts,
+      ct: offline ? null : 0,
+      cu: offline ? null : i % 9 === 0 ? 20 : 0,
+      cm: offline ? null : 0,
+      bd: offline ? null : 0,
+    });
+  }
+  return { ping, loss };
+}
+
 function buildServerPayload(server: MockServer, index: number) {
   const now = Date.now();
   const offline = server.offline === true;
@@ -228,6 +255,7 @@ function buildServerPayload(server: MockServer, index: number) {
     agent_version: "1.3.3",
     last_updated: offline ? now - 40 * 60_000 : now,
     timestamp: offline ? now - 40 * 60_000 : now,
+    ...buildLatencyWindow(index, offline),
   };
 }
 

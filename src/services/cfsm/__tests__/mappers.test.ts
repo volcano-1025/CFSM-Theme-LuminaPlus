@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CfsmServerSchema, type CfsmServer } from "@/types/cfsm";
 import {
   carrierPingTasks,
+  parseLatencyWindow,
   historyRowToLoadRecord,
   historyRowsToPingRecords,
   inferIntervalSeconds,
@@ -290,6 +291,66 @@ describe("history conversion", () => {
       [3, "移动"],
       [4, "BD"],
     ]);
+  });
+});
+
+describe("parseLatencyWindow", () => {
+  it("zips the ping and loss arrays together by timestamp", () => {
+    const window = parseLatencyWindow(
+      server({
+        ping: [
+          { ts: NOW - 120_000, ct: 23, cu: 25, cm: 30, bd: 40 },
+          { ts: NOW, ct: 24, cu: 26, cm: null, bd: 42 },
+        ],
+        loss: [
+          { ts: NOW - 120_000, ct: 0, cu: 0, cm: 0, bd: 0 },
+          { ts: NOW, ct: 0, cu: 0, cm: 100, bd: 0 },
+        ],
+      }),
+    );
+
+    expect(window).toHaveLength(2);
+    expect(window[0]).toEqual({
+      time: NOW - 120_000,
+      ping: { ct: 23, cu: 25, cm: 30, bd: 40, lossCt: 0, lossCu: 0, lossCm: 0, lossBd: 0 },
+    });
+    expect(window[1]?.ping.cm).toBeNull();
+    expect(window[1]?.ping.lossCm).toBe(100);
+  });
+
+  it("treats a disabled carrier (false) as no measurement", () => {
+    const window = parseLatencyWindow(
+      server({ ping: [{ ts: NOW, ct: 23, cu: false, cm: 30, bd: 40 }] }),
+    );
+
+    expect(window[0]?.ping.ct).toBe(23);
+    expect(window[0]?.ping.cu).toBeNull();
+  });
+
+  it("sorts points ascending and drops ones without a timestamp", () => {
+    const window = parseLatencyWindow(
+      server({
+        ping: [
+          { ts: NOW, ct: 30 },
+          { ts: 0, ct: 99 },
+          { ts: NOW - 240_000, ct: 20 },
+        ],
+      }),
+    );
+
+    expect(window.map((sample) => sample.ping.ct)).toEqual([20, 30]);
+  });
+
+  it("returns nothing for an older backend without the window fields", () => {
+    expect(parseLatencyWindow(server())).toEqual([]);
+    expect(parseLatencyWindow(server({ ping: [] }))).toEqual([]);
+  });
+
+  it("keeps points that have no matching loss entry", () => {
+    const window = parseLatencyWindow(server({ ping: [{ ts: NOW, ct: 23 }] }));
+
+    expect(window[0]?.ping.ct).toBe(23);
+    expect(window[0]?.ping.lossCt).toBeNull();
   });
 });
 

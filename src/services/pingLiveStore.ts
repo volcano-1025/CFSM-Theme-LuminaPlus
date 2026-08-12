@@ -1,17 +1,21 @@
 import type { CarrierPingSnapshot } from "@/types/cfsm";
 
 /**
- * 首页延迟条的数据源：由实时数据滚动累积，而不是查历史。
+ * 首页延迟条的数据源。
  *
- * `/api/servers` 与 WebSocket 推送里本来就带每台节点的 `ping_ct/cu/cm/bd` 与 `loss_*`，
- * 每次探针上报都会更新。这里把它们按节点存成一个滚动缓冲区，首页直接画这段缓冲区。
+ * 两个来源，优先级从高到低：
  *
- * 这样做的原因是成本：`/api/history/all` 会扫该节点整段时间窗口的历史行，
- * 首页给每台节点每分钟查一次的话，后端 D1 读行会翻几十倍（后端作者实测约 60 倍，
- * 30 秒上报则约 120 倍）。实时累积对后端是零额外请求。
+ * 1. **后端窗口**（Workers 2.8.3 Beta2 起）：`/api/servers` 直接给出每台节点最近一小时的
+ *    探测窗口 —— 30 个槽位、每 2 分钟一个。首屏就是完整的一小时，由 `seedPingHistory` 灌入。
+ * 2. **实时累积**：`/api/servers` 与 WebSocket 推送里一直都有 `ping_ct/cu/cm/bd` 与 `loss_*`
+ *    当前值，由 `recordPingSample` 逐点累积。用于两次刷新之间补上最新的点，
+ *    以及兜底旧版后端（那时没有窗口字段，只能从零攒）。
  *
- * 代价是首次打开只有最近这一小会儿的数据，所以缓冲区会写进 localStorage，
- * 刷新后能立刻接上；超过一小时的样本在读取时丢弃。
+ * 两者都不查 `/api/history/all`：那个接口会扫节点整段时间窗口的历史行，
+ * 首页给每台节点每分钟查一次会让后端 D1 读行翻几十倍（后端作者实测约 60 倍，
+ * 30 秒上报则约 120 倍）。
+ *
+ * 缓冲区会写进 localStorage，旧版后端下刷新也能立刻接上；超过一小时的样本在读取时丢弃。
  */
 
 export interface PingLiveSample {
@@ -233,6 +237,53 @@ export function recordPingSample(
     uuid,
     next.length > MAX_SAMPLES_PER_NODE ? next.slice(-MAX_SAMPLES_PER_NODE) : next,
   );
+  emit(uuid);
+  schedulePersist();
+}
+
+function sameSeries(a: readonly PingLiveSample[], b: readonly PingLiveSample[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const left = a[i]!;
+    const right = b[i]!;
+    if (left.time !== right.time || !samePing(left.ping, right.ping)) return false;
+  }
+  return true;
+}
+
+/**
+ * 用后端下发的一小时窗口替换缓冲区。
+ *
+ * 窗口是权威数据；本地累积里比窗口最后一点更新的样本会保留下来，
+ * 这样两次 `/api/servers` 之间由 WebSocket 记下的最新点不会被覆盖掉。
+ */
+export function seedPingHistory(
+  uuid: string,
+  window: readonly PingLiveSample[],
+): void {
+  if (!uuid || window.length === 0) return;
+
+  hydrate();
+  const now = Date.now();
+  const fresh = window.filter((sample) => isFresh(sample, now));
+  if (fresh.length === 0) return;
+
+  const lastSeededTime = fresh[fresh.length - 1]!.time;
+  const local = samplesByUuid.get(uuid) ?? EMPTY_SAMPLES;
+  const newerLocal = local.filter(
+    (sample) => sample.time > lastSeededTime && isFresh(sample, now),
+  );
+
+  const merged = [...fresh, ...newerLocal];
+  const next =
+    merged.length > MAX_SAMPLES_PER_NODE
+      ? merged.slice(-MAX_SAMPLES_PER_NODE)
+      : merged;
+
+  // 后端窗口每次刷新基本原样返回，内容没变就不要惊动订阅者。
+  if (sameSeries(local, next)) return;
+
+  samplesByUuid.set(uuid, next);
   emit(uuid);
   schedulePersist();
 }
