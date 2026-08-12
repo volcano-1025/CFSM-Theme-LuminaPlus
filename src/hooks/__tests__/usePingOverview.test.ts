@@ -140,6 +140,49 @@ describe("buildPingBuckets", () => {
     expect(last?.lost).toBe(1);
   });
 
+  it("bridges the gap before an off-grid newest point", () => {
+    // 后端窗口的最新一格常常不落在 2 分钟网格上，与上一格能差 4~5 分钟。
+    // 一格样本要延续到下一次采样为止，否则最右边会凭空空一格，而且随 now 推进时有时无。
+    const samples = [
+      ...Array.from({ length: 10 }, (_, index) => sample(24 - index * 2, { ct: 40 })),
+      sample(0.5, { ct: 42 }),
+    ];
+    const item = buildPingOverviewItem("node-a", 1, samples);
+    const filled = buildPingBuckets(item, 24, NOW)
+      .map((bucket) => (bucket.total > 0 ? "#" : "."))
+      .join("");
+
+    expect(filled.slice(filled.indexOf("#"))).not.toContain(".");
+  });
+
+  it("keeps a real gap where the window reported no measurement", () => {
+    // 槽位存在但该线路没值（节点掉线/探测失败）是真的空档，不能被相邻样本填平。
+    const samples = [
+      sample(10, { ct: 40 }),
+      sample(8, {}),
+      sample(6, {}),
+      sample(4, { ct: 41 }),
+      sample(0.5, { ct: 42 }),
+    ];
+    const item = buildPingOverviewItem("node-a", 1, samples);
+
+    expect(item.emptyTimes).toHaveLength(2);
+    const buckets = buildPingBuckets(item, 24, NOW);
+    expect(buckets.some((bucket) => bucket.total === 0)).toBe(true);
+  });
+
+  it("stops holding a sample after five minutes", () => {
+    // 数据真的断了就该留空，而不是让最后一格一路铺到现在。
+    const item = buildPingOverviewItem("node-a", 1, [
+      sample(40, { ct: 40 }),
+      sample(38, { ct: 40 }),
+    ]);
+    const buckets = buildPingBuckets(item, 24, NOW);
+    const last = buckets[buckets.length - 1];
+
+    expect(last?.total).toBe(0);
+  });
+
   it("drops samples older than the window", () => {
     const buckets = buildPingBuckets(
       buildPingOverviewItem("node-a", 1, [sample(180, { ct: 30 })]),

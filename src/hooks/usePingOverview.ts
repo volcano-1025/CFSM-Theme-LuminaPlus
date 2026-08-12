@@ -36,6 +36,8 @@ const DEFAULT_SAMPLE_INTERVAL_MS = 60_000;
 /** 后端窗口是 2 分钟一个槽位，本地累积约 50 秒一个；限制在这个区间内。 */
 const MIN_SAMPLE_INTERVAL_MS = 20_000;
 const MAX_SAMPLE_INTERVAL_MS = 300_000;
+/** 一个样本最多向后延续多久；超过就认为数据真的断了，让图表留空。 */
+const MAX_SAMPLE_HOLD_MS = 300_000;
 
 /**
  * 样本间隔由数据自己决定：后端一小时窗口是 120 秒一个点，本地累积约 50 秒一个。
@@ -105,13 +107,18 @@ export function buildPingOverviewItem(
   const carrier = task.key;
   const lossKey = LOSS_KEY_BY_CARRIER[carrier];
   const out: PingOverviewItem["samples"] = [];
+  const emptyTimes: number[] = [];
   let max = 1;
   let lastValue: number | null = null;
   let loss: number | null = null;
 
   for (const sample of samples) {
     const value = sample.ping[carrier];
-    if (value == null) continue;
+    if (value == null) {
+      // 这一刻确实测过、但这条线路没有值，记下来防止相邻样本把它填平。
+      emptyTimes.push(sample.time);
+      continue;
+    }
     const sampleLoss = sample.ping[lossKey];
     out.push({
       time: sample.time,
@@ -133,6 +140,7 @@ export function buildPingOverviewItem(
     lastValue,
     metricIntervalMs: sampleIntervalMs ?? resolveSampleIntervalMs(samples),
     samples: out,
+    emptyTimes,
     max,
     loss,
   };
@@ -253,7 +261,7 @@ export function useNodePingOverviewLines(
 }
 
 export function buildPingBuckets(
-  ping: Pick<PingOverviewItem, "samples" | "metricIntervalMs">,
+  ping: Pick<PingOverviewItem, "samples" | "metricIntervalMs" | "emptyTimes">,
   count?: number,
   now = Date.now(),
 ): PingOverviewBucket[] {
@@ -292,35 +300,61 @@ export function buildPingBuckets(
     }
   };
 
+  // 一个样本代表「到下一次采样为止的这段时间」。下一次采样可能是下一个有值的样本，
+  // 也可能是一个明确没有值的槽位（`emptyTimes`）—— 后者要让图表真的留空。
+  // 后端一小时窗口的最新一格常常不落在 2 分钟网格上，与上一格能差 4~5 分钟；
+  // 不做延续就会在最右边凭空空出一格，而且随着 now 推进时有时无。
+  const eventTimes = [
+    ...(ping.samples ?? []).map((sample) => sample.time),
+    ...(ping.emptyTimes ?? []),
+  ].sort((left, right) => left - right);
+
+  const nextEventAfter = (time: number): number | undefined => {
+    let low = 0;
+    let high = eventTimes.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (eventTimes[mid]! <= time) low = mid + 1;
+      else high = mid;
+    }
+    return eventTimes[low];
+  };
+
+  const holdMs =
+    metricIntervalMs > 0
+      ? Math.min(MAX_SAMPLE_HOLD_MS, Math.max(metricIntervalMs, bucketMs) * 2)
+      : 0;
+
   for (const sample of ping.samples ?? []) {
-    if (metricIntervalMs > bucketMs) {
-      const sampleEnd = sample.time + metricIntervalMs;
-      if (sampleEnd <= windowStart || sample.time > now) continue;
+    if (sample.time > now) continue;
 
-      // 样本时间戳是采样点起点。以每个可视 bucket 的中点判断它落在哪个采样区间，
-      // 相当于 sample-and-hold：不会制造规律性空洞，也不会让柱宽随节点变化。
-      for (let index = 0; index < resolvedCount; index += 1) {
-        const midpoint = windowStart + (index + 0.5) * bucketMs;
-        if (midpoint >= sample.time && midpoint < sampleEnd) {
-          addSampleToBucket(index, sample);
-        }
+    const coverEnd = Math.max(
+      sample.time,
+      Math.min(
+        nextEventAfter(sample.time) ?? Number.POSITIVE_INFINITY,
+        sample.time + holdMs,
+        now,
+      ),
+    );
+    if (coverEnd <= windowStart) continue;
+
+    // 覆盖区间跨过哪些 bucket 的中点，就填哪些 —— 相当于 sample-and-hold，
+    // 柱宽不随节点变化，也不会因为 bucket 边界对不齐而漏格。
+    let assigned = false;
+    for (let index = 0; index < resolvedCount; index += 1) {
+      const midpoint = windowStart + (index + 0.5) * bucketMs;
+      if (midpoint >= sample.time && midpoint < coverEnd) {
+        addSampleToBucket(index, sample);
+        assigned = true;
       }
-      continue;
     }
+    if (assigned) continue;
 
-    let sampleTime = sample.time;
-    if (metricIntervalMs > 0) {
-      const sampleEnd = sample.time + metricIntervalMs;
-      if (sampleEnd <= windowStart || sample.time > now) continue;
-      const overlapStart = Math.max(sample.time, windowStart);
-      const overlapEnd = Math.min(sampleEnd, now);
-      if (overlapEnd < overlapStart) continue;
-      sampleTime = overlapStart + (overlapEnd - overlapStart) / 2;
-    } else if (sample.time < windowStart || sample.time > now) {
-      continue;
-    }
-
-    let bucketIndex = Math.floor((sampleTime - windowStart) / bucketMs);
+    // 覆盖区间比一个 bucket 还短（或正好错过中点）时，落到它自己所在的那格。
+    const overlapStart = Math.max(sample.time, windowStart);
+    const overlapEnd = Math.max(Math.min(coverEnd, now), overlapStart);
+    const center = overlapStart + (overlapEnd - overlapStart) / 2;
+    let bucketIndex = Math.floor((center - windowStart) / bucketMs);
     if (bucketIndex < 0) continue;
     if (bucketIndex >= resolvedCount) bucketIndex = resolvedCount - 1;
     addSampleToBucket(bucketIndex, sample);
@@ -346,19 +380,19 @@ export function buildPingBuckets(
 }
 
 export function usePingBuckets(
-  ping: Pick<PingOverviewItem, "samples" | "metricIntervalMs">,
+  ping: Pick<PingOverviewItem, "samples" | "metricIntervalMs" | "emptyTimes">,
   count?: number,
   enabled = true,
 ): PingOverviewBucket[] {
-  const { samples, metricIntervalMs } = ping;
+  const { samples, metricIntervalMs, emptyTimes } = ping;
   // 数据引用不变时窗口也要随时间前移,否则时间轴最多滞后约 2 个桶;分钟粒度足够
   // (桶宽 ≥150s),也避免每次推送都重算。
   const now = useMinuteClock(enabled);
   return useMemo(
     () =>
       enabled
-        ? buildPingBuckets({ samples, metricIntervalMs }, count, now)
+        ? buildPingBuckets({ samples, metricIntervalMs, emptyTimes }, count, now)
         : EMPTY_PING_BUCKETS,
-    [count, enabled, metricIntervalMs, now, samples],
+    [count, emptyTimes, enabled, metricIntervalMs, now, samples],
   );
 }

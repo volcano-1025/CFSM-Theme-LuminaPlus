@@ -512,6 +512,14 @@ export interface PingOverviewItem {
     count?: number;
     loss?: number | null;
   }>;
+  /**
+   * 明确「测过但没有值」的时间点。
+   *
+   * 后端一小时窗口会为没测到的槽位下发 null，这些点必须和「后端压根没给点」区分开：
+   * 前者是真的空档，要留空；后者（例如窗口最新一格不在 2 分钟网格上）应该由上一个
+   * 样本延续过去，否则图表会凭空缺一格。
+   */
+  emptyTimes?: number[];
   max: number;
   loss: number | null;
 }
