@@ -57,6 +57,8 @@ const MOBILE_SORT_OPTIONS: Array<{ field: AssetsSortField; label: string }> = [
 ];
 
 const ASSETS_MOBILE_QUERY = "(max-width: 720px)";
+/** 汇率接口失败时的占位，保持引用稳定。 */
+const EMPTY_RATES: Record<string, number> = {};
 
 function sortValue(detail: AssetDetail, field: AssetsSortField): number {
   switch (field) {
@@ -140,18 +142,23 @@ export function Assets() {
     enabled: themeSettings.isReady && nodes.length > 0,
     retry: 1,
   });
+  // 汇率接口失败也要出统计：人民币定价的节点不需要换算，外币节点单独标「汇率缺失」。
+  // 请求失败、被拦截、或 React Query 判定离线挂起（fetchStatus: "paused"）时查询会一直
+  // 停在 pending，所以判断条件是「没在请求且没有数据」，而不是 isError。
+  const ratesFetching = rateQuery.fetchStatus === "fetching" && !rateQuery.data;
+  const rates = rateQuery.data?.rates ?? (ratesFetching ? null : EMPTY_RATES);
   const summary = useMemo(
     () =>
-      rateQuery.data
+      rates
         ? calculateCostSummary(
             nodes,
             themeSettings.costIgnoredNodes,
-            rateQuery.data.rates,
+            rates,
             themeSettings.costPremiums,
             now,
           )
         : null,
-    [nodes, now, themeSettings.costIgnoredNodes, themeSettings.costPremiums, rateQuery.data],
+    [nodes, now, themeSettings.costIgnoredNodes, themeSettings.costPremiums, rates],
   );
   const detailRows = useMemo(() => {
     const direction = sortDirection === "asc" ? 1 : -1;
@@ -504,7 +511,7 @@ export function Assets() {
             </>
           ) : (
             <div className="cost-summary-empty">
-              {rateQuery.isError ? "汇率获取失败，点击右上角刷新重试" : "费用明细加载中"}
+              {ratesFetching ? "费用明细加载中" : "汇率获取失败，点击右上角刷新重试"}
             </div>
           )}
 

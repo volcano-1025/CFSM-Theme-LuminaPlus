@@ -19,6 +19,27 @@ describe("formatBillingCycle", () => {
     expect(formatBillingCycle(1095)).toBe("3年");
   });
 
+  it("understands the backend's cycle vocabulary", () => {
+    // CF-Server-Monitor 后端下拉的规范值（src/utils/serverBilling.js）。
+    // 认不出会全部退回年付：三年付显示成「年」，摊销价格也会虚高三倍。
+    expect(formatBillingCycle("month")).toBe("月");
+    expect(formatBillingCycle("quarter")).toBe("季");
+    expect(formatBillingCycle("half_year")).toBe("半年");
+    expect(formatBillingCycle("year")).toBe("年");
+    expect(formatBillingCycle("two_years")).toBe("2年");
+    expect(formatBillingCycle("three_years")).toBe("3年");
+    expect(formatBillingCycle("four_years")).toBe("4年");
+    expect(formatBillingCycle("five_years")).toBe("5年");
+  });
+
+  it("understands multi-year cycles written by hand", () => {
+    expect(formatBillingCycle("三年")).toBe("3年");
+    expect(formatBillingCycle("两年")).toBe("2年");
+    expect(formatBillingCycle("3 years")).toBe("3年");
+    expect(formatBillingCycle("3y")).toBe("3年");
+    expect(formatBillingCycle("一年")).toBe("年");
+  });
+
   it("treats -1 as a lifetime cycle (regression)", () => {
     expect(formatBillingCycle(-1)).toBe("永久");
   });

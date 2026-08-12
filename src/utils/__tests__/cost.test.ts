@@ -118,6 +118,35 @@ describe("calculateCostSummary", () => {
     expect(paidCount(summary)).toBe(0);
   });
 
+  it("amortises a three-year cycle over three years, not one", () => {
+    // 后端的 three_years 之前认不出来，退回年付：月均和剩余价值都会虚高三倍。
+    const summary = calculateCostSummary(
+      [node({ price: 3600, currency: "¥", billing_cycle: "three_years", expired_at: inDays(1095) })],
+      [],
+      RATES,
+    );
+
+    expect(summary.details[0]!.billingCycleDays).toBe(1095);
+    expect(summary.monthlyCny).toBeCloseTo(100, 1);
+    expect(summary.remainingCny).toBeCloseTo(3600, 0);
+  });
+
+  it("still totals CNY nodes when the exchange rate api is unavailable", () => {
+    // 汇率接口挂掉不该让整张资产卡显示 "—"：人民币定价根本不需要换算。
+    const summary = calculateCostSummary(
+      [
+        node({ uuid: "a", price: 100, currency: "¥", billing_cycle: 30 }),
+        node({ uuid: "b", price: 10, currency: "$", billing_cycle: 30 }),
+      ],
+      [],
+      {},
+    );
+
+    expect(summary.monthlyCny).toBeCloseTo(100, 5);
+    expect(paidCount(summary)).toBe(1);
+    expect(noteCount(summary, "汇率缺失")).toBe(1);
+  });
+
   it("converts currency into CNY for the total", () => {
     const summary = calculateCostSummary(
       [node({ price: 10, currency: "USD", billing_cycle: 365, expired_at: inDays(200) })],

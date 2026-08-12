@@ -192,11 +192,17 @@ export function normalizeTrafficCalcType(value: unknown): string {
   }
 }
 
-/** `price` 为 `"0"` 或 `"-1"` 表示免费，空串表示未设置。 */
+/**
+ * `price` 为 `"0"` 或 `"-1"` 表示免费，空串表示未设置。
+ *
+ * `-1` 原样保留：那是站长显式标记的「免费」，卡片会显示「免费」而不是留空；
+ * 费用统计对 `price <= 0` 一视同仁，不受影响。其余负数按未设置处理。
+ */
 export function parsePrice(value: unknown): number {
   const raw = String(value ?? "").trim();
   if (!raw) return 0;
   const num = toNumber(raw.replace(/,/g, ""), 0);
+  if (num === -1) return -1;
   if (num < 0) return 0;
   return num;
 }

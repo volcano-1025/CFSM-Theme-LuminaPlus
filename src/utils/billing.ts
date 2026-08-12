@@ -21,16 +21,55 @@ function isLongTermExpire(value: string | number | null | undefined) {
 
 type BillingCycleKind = "month" | "quarter" | "halfYear" | "year" | "lifetime";
 
+/** 中文数字 → 年数，覆盖后端下拉里的「两年」到「五年」。 */
+const CHINESE_YEAR_WORDS: Record<string, number> = {
+  "一": 1,
+  "两": 2,
+  "二": 2,
+  "三": 3,
+  "四": 4,
+  "五": 5,
+};
+
 /**
  * 把自由文本的账单周期关键词(须预先 lowercase/trim)归类成标准周期,识别不出时返回 null。
  * 这里的标签格式化和 utils/cost.ts 里的天数解析共用它,让这套正则只存在一处。
+ *
+ * 除了自由文本，还必须认得 CF-Server-Monitor 后端下拉的规范值
+ * (`month` / `quarter` / `half_year` / `year` / `two_years` … `five_years`，
+ * 见后端 src/utils/serverBilling.js)。认不出时调用方会当成年付，
+ * 三年付会被显示并摊销成一年，价格因此虚高三倍。
  */
-export function classifyBillingCycleWord(normalized: string): BillingCycleKind | null {
-  if (/^(monthly|month|mo|月|每月|月付)$/.test(normalized)) return "month";
-  if (/^(quarterly|quarter|季|季度|每季|季付)$/.test(normalized)) return "quarter";
-  if (/^(semi-?annual(ly)?|halfyear|half-year|半年|半年付)$/.test(normalized)) return "halfYear";
-  if (/^(annual(ly)?|yearly|year|yr|年|每年|年付)$/.test(normalized)) return "year";
-  if (/^(lifetime|once|one-time|永久|一次性|买断)$/.test(normalized)) return "lifetime";
+export function classifyBillingCycleWord(
+  normalized: string,
+): { kind: BillingCycleKind; years?: number } | null {
+  if (/^(monthly|month|mo|月|每月|月付)$/.test(normalized)) return { kind: "month" };
+  if (/^(quarterly|quarter|季|季度|每季|季付)$/.test(normalized)) return { kind: "quarter" };
+  if (/^(semi-?annual(ly)?|half[-_]?year(ly)?|半年|半年付)$/.test(normalized)) {
+    return { kind: "halfYear" };
+  }
+  if (/^(annual(ly)?|yearly|year|yr|年|一年|每年|年付)$/.test(normalized)) {
+    return { kind: "year", years: 1 };
+  }
+  if (/^(lifetime|once|one-time|永久|一次性|买断)$/.test(normalized)) {
+    return { kind: "lifetime" };
+  }
+
+  // two_years / 3 years / 三年 / 5y …
+  const englishYears = /^(\d+)[-_\s]*(y|yr|yrs|year|years)$/.exec(normalized);
+  if (englishYears) {
+    return { kind: "year", years: Number(englishYears[1]) };
+  }
+  const wordYears = /^(two|three|four|five)[-_\s]*years?$/.exec(normalized);
+  if (wordYears) {
+    const years = { two: 2, three: 3, four: 4, five: 5 }[wordYears[1]!]!;
+    return { kind: "year", years };
+  }
+  const chineseYears = /^([一两二三四五])年(付)?$/.exec(normalized);
+  if (chineseYears) {
+    return { kind: "year", years: CHINESE_YEAR_WORDS[chineseYears[1]!]! };
+  }
+
   return null;
 }
 
@@ -67,7 +106,8 @@ export function normalizeBillingCycle(
     // numeric <= 0(如 0)落到下面的标签兜底分支。
   }
 
-  switch (classifyBillingCycleWord(raw.toLowerCase())) {
+  const word = classifyBillingCycleWord(raw.toLowerCase());
+  switch (word?.kind) {
     case "month":
       return { kind: "month", days: 30 };
     case "quarter":
@@ -76,7 +116,10 @@ export function normalizeBillingCycle(
       return { kind: "halfYear", days: 180 };
     case "lifetime":
       return { kind: "lifetime", days: -1 };
-    case "year":
+    case "year": {
+      const years = word.years && word.years > 0 ? word.years : 1;
+      return { kind: "year", days: years * 365, years };
+    }
     default:
       return { kind: "year", days: 365, years: 1 };
   }

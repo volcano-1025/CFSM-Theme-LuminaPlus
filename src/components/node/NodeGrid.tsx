@@ -66,6 +66,8 @@ type MiniGridStyle = CSSProperties & { "--mini-card-min-width": string };
 
 // 标准 UUID 不含逗号，可安全拼成稳定签名。
 const UUID_KEY_SEPARATOR = ",";
+/** 汇率接口失败时的占位，保持引用稳定，让 useMemo 不会每次渲染都重算。 */
+const EMPTY_RATES: Record<string, number> = {};
 
 type IdleCapableWindow = Window & {
   requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
@@ -118,6 +120,7 @@ function HomeOverviewCards({
   overview,
   costSummary,
   costLoading,
+  costRatesMissing,
   showOverviewRatings,
   showTrafficRating,
   showBandwidthRating,
@@ -133,6 +136,7 @@ function HomeOverviewCards({
   overview: HomeOverview;
   costSummary: { remainingCny: number } | null;
   costLoading: boolean;
+  costRatesMissing: boolean;
   dense: boolean;
   showOverviewRatings: boolean;
   showTrafficRating: boolean;
@@ -285,7 +289,9 @@ function HomeOverviewCards({
           <p className="overview-card-value">{remainingValue}</p>
         </div>
         <div className="overview-card-footer">
-          <p className="overview-card-caption">实时汇率计算</p>
+          <p className="overview-card-caption">
+            {costRatesMissing ? "汇率获取失败 · 仅统计人民币" : "实时汇率计算"}
+          </p>
           {renderRating(assetRating)}
         </div>
       </article>
@@ -488,18 +494,25 @@ export function NodeGrid() {
     enabled: (costNeeded || sortField === "price") && hasNodes,
     retry: 1,
   });
+  // 汇率接口拿不到时不能整卡显示 "—"：人民币定价的节点根本不需要换算，照样统计，
+  // 只有外币节点会被标成「汇率缺失」不计入。
+  // 注意不能只判断 isError：请求失败、被 CSP 拦下、或 React Query 判定离线把请求
+  // 挂起（fetchStatus: "paused"）时查询都停在 pending，永远等不到 error。
+  // 只要不是正在请求且没有数据，就按「没有汇率」出结果。
+  const ratesFetching = rateQuery.fetchStatus === "fetching" && !rateQuery.data;
+  const costRates = rateQuery.data?.rates ?? (ratesFetching ? null : EMPTY_RATES);
   const costSummary = useMemo(
     () =>
-      rateQuery.data
+      costRates
         ? calculateCostSummary(
             visibleMeta,
             themeSettings.costIgnoredNodes,
-            rateQuery.data.rates,
+            costRates,
             themeSettings.costPremiums,
             now,
           )
         : null,
-    [now, visibleMeta, themeSettings.costIgnoredNodes, themeSettings.costPremiums, rateQuery.data],
+    [now, visibleMeta, themeSettings.costIgnoredNodes, themeSettings.costPremiums, costRates],
   );
   // 「价格」排序键:月化价格(CNY);免费/忽略/汇率缺失的节点 null,排到默认序之后。
   const priceByUuid = useMemo(() => {
@@ -511,7 +524,8 @@ export function NodeGrid() {
     }
     return map;
   }, [costSummary]);
-  const costLoading = costNeeded && rateQuery.isLoading;
+  const costLoading = costNeeded && ratesFetching;
+  const costRatesMissing = costNeeded && !rateQuery.data && !ratesFetching;
   const groupOptions = useMemo(
     () =>
       sortHomeGroupOptions(
@@ -682,6 +696,7 @@ export function NodeGrid() {
           renewalNodes={renewalNodes}
           costSummary={costSummary}
           costLoading={costLoading}
+          costRatesMissing={costRatesMissing}
           showOverviewRatings={themeSettings.showOverviewRatings}
           showTrafficRating={themeSettings.showTrafficRating}
           showBandwidthRating={themeSettings.showBandwidthRating}

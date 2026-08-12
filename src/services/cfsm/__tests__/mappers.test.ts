@@ -164,6 +164,13 @@ describe("toNodeInfo", () => {
     expect(info.expired_at).toBe("2026-12-31");
   });
 
+  it("keeps -1 as the backend's explicit free marker", () => {
+    // 归零的话卡片只会留白，显示不出「免费」。
+    expect(toNodeInfo(server({ price: "-1" })).price).toBe(-1);
+    expect(toNodeInfo(server({ price: "" })).price).toBe(0);
+    expect(toNodeInfo(server({ price: "-3" })).price).toBe(0);
+  });
+
   it("keeps IP reachability as a flag, since no address is exposed", () => {
     const info = toNodeInfo(server());
 
