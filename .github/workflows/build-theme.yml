@@ -3,17 +3,21 @@ name: Build theme
 # 源码在 main，构建产物（index.html + assets/）自动发布到 dist 分支。
 # 主题安装地址就填 dist 分支：
 #   https://github.com/<owner>/<repo>/tree/dist
+#
+# preview 分支同理，产物发到 dist-preview，用来在后台临时切地址验收，
+# 不会动到线上用的 dist。
 on:
   push:
-    branches: [main]
+    branches: [main, preview]
   workflow_dispatch:
 
 permissions:
   contents: write
 
-# 连续推送时只保留最后一次构建，避免两个 job 抢着 force-push dist。
+# 连续推送时只保留最后一次构建，避免两个 job 抢着 force-push 同一个分支。
+# main 与 preview 各自排队，互不打断。
 concurrency:
-  group: build-theme
+  group: build-theme-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -21,6 +25,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve target branch
+        id: target
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "preview" ]; then
+            echo "branch=dist-preview" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=dist" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -54,19 +67,20 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to dist branch
+      - name: Publish build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ steps.target.outputs.branch }}
         run: |
           set -euo pipefail
           cd dist
-          # dist 分支是纯产物，每次重建覆盖，不保留历史。
-          git init -q -b dist
+          # 产物分支是纯产物，每次重建覆盖，不保留历史。
+          git init -q -b "${TARGET_BRANCH}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -q -m "build: ${GITHUB_SHA::7}"
           git push -q --force \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            dist:dist
-          echo "已发布到 dist 分支：${GITHUB_SHA::7}"
+            "${TARGET_BRANCH}:${TARGET_BRANCH}"
+          echo "已发布到 ${TARGET_BRANCH} 分支：${GITHUB_SHA::7}"

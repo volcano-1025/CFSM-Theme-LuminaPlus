@@ -54,6 +54,27 @@ npm run dev
    https://localhost:5173,https://<你的用户名>.github.io
    ```
 
+## 发布与验收
+
+`.github/workflows/build-theme.yml` 会在推送时构建并发布产物，两条分支各走各的：
+
+| 推送到 | 产物分支 | 用途 |
+| --- | --- | --- |
+| `main` | `dist` | 线上主题地址 |
+| `preview` | `dist-preview` | 上线前验收，不影响 `dist` |
+
+验收流程：改动先推 `preview`，等 Actions 跑完，在后台把主题地址临时填成
+`https://github.com/<owner>/<repo>/tree/dist-preview` 看效果；确认没问题再合进 `main`。
+
+```bash
+git push origin HEAD:preview      # 出预览产物
+git push origin main              # 确认后正式发布
+```
+
+Workers 对分支引用有约一小时的缓存（`THEME_CACHE_TTL`），验收时若看到旧版本，
+把地址换成 40 位 commit SHA（`.../tree/<sha>`）即可绕过缓存 —— 这类地址被视为不可变，
+线上也可以一直锁在某个 SHA 上，`dist` 分支怎么更新都不会自动生效。
+
 ## 数据来源
 
 | 主题功能 | 后端接口 |
