@@ -39,6 +39,7 @@ export interface ResolvedThemeSettings {
   showGroupTabs: boolean;
   showRegionBar: boolean;
   showCardGroup: boolean;
+  showCardPrice: boolean;
   homeGroupOrder: string[];
   enableHomeSort: boolean;
   homeSortField: HomeSortField;
@@ -78,6 +79,7 @@ export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
   showGroupTabs: true,
   showRegionBar: true,
   showCardGroup: true,
+  showCardPrice: true,
   homeGroupOrder: [],
   enableHomeSort: true,
   homeSortField: "default",
@@ -187,6 +189,7 @@ export function normalizeThemeSettings(
     showGroupTabs: enabledUnlessFalse(settings?.showGroupTabs),
     showRegionBar: enabledUnlessFalse(settings?.showRegionBar),
     showCardGroup: enabledUnlessFalse(settings?.showCardGroup),
+    showCardPrice: enabledUnlessFalse(settings?.showCardPrice),
     homeGroupOrder: normalizeHomeGroupOrder(settings?.homeGroupOrder),
     enableHomeSort: enabledUnlessFalse(settings?.enableHomeSort),
     ...normalizeHomeSortDefault(settings?.homeSortField, settings?.homeSortDirection),

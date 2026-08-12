@@ -39,7 +39,6 @@ import {
   saveLocalThemeSettings,
 } from "@/services/themeSettingsStore";
 import { copyText } from "@/utils/clipboard";
-import { THEME_NAME } from "@/utils/themeMeta";
 import type { NodeInfo, PingTask, ThemeSettings } from "@/types/cfsm";
 import {
   calculateCostSummary,
@@ -256,6 +255,7 @@ function pickManagedThemeSettings(settings: ResolvedThemeSettings) {
     showGroupTabs: settings.showGroupTabs,
     showRegionBar: settings.showRegionBar,
     showCardGroup: settings.showCardGroup,
+    showCardPrice: settings.showCardPrice,
     homeGroupOrder: settings.homeGroupOrder,
     enableHomeSort: settings.enableHomeSort,
     homeSortField: settings.homeSortField,
@@ -1174,13 +1174,11 @@ export function ThemeManage() {
             <h1 className="theme-masthead-title">主题设置</h1>
             <p className="theme-masthead-desc">
               集中调整 LuminaPlus 的展示偏好与首页延迟线路；设置保存在本机浏览器，只影响当前设备。
+              需要所有设备与访客统一，点右上角「复制配置 JSON」，粘贴到后台「外观设置 →
+              主题自定义配置」保存即可。
             </p>
           </div>
           <dl className="theme-masthead-meta">
-            <div>
-              <dt>主题</dt>
-              <dd>{THEME_NAME}</dd>
-            </div>
             <div>
               <dt>首页延迟</dt>
               <dd>
@@ -1384,6 +1382,13 @@ export function ThemeManage() {
             title="卡片显示分组"
             desc="关闭后卡片内不再显示节点分组名（不影响分组筛选栏与备注）。"
             checked={draft.showCardGroup}
+            onPatch={patch}
+          />
+          <ToggleRow
+            field="showCardPrice"
+            title="卡片显示价格"
+            desc="关闭后大卡片内不再显示价格。"
+            checked={draft.showCardPrice}
             onPatch={patch}
           />
           <ToggleRow

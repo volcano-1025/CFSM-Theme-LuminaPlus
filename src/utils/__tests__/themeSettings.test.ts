@@ -84,4 +84,9 @@ describe("normalizeThemeSettings", () => {
 
     expect(pasted).toEqual(snapshot);
   });
+
+  it("defaults 卡片显示价格 to on and honours an explicit false", () => {
+    expect(normalizeThemeSettings(null).showCardPrice).toBe(true);
+    expect(normalizeThemeSettings({ showCardPrice: false } as never).showCardPrice).toBe(false);
+  });
 });

@@ -87,7 +87,8 @@ export const NodeCard = memo(function NodeCard({
     expire,
     expireColor,
     uptime,
-    renewalPrice,
+    renewalPrice: metaRenewalPrice,
+    showCardPrice,
     latencyColor,
     lossColor,
     loadFraction,
@@ -101,6 +102,8 @@ export const NodeCard = memo(function NodeCard({
     isOffline,
     osName,
   } = model;
+  // 「卡片显示价格」关掉后不渲染价格 chip。
+  const renewalPrice = showCardPrice ? metaRenewalPrice : null;
   const showConnections = themeSettings.isReady && themeSettings.showConnections;
 
   return (

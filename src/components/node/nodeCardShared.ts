@@ -16,9 +16,9 @@ export function formatCompactPercent(value: number) {
   return `${trimFixed(value, 1)}%`;
 }
 
-/** 卡片到期文案:"余 X天";无到期时 "余 --"。 */
+/** 卡片到期文案:"余 X天";没填到期日期按「永久」显示。 */
 export function formatCompactExpire({ value, unit }: { value: string; unit: string }) {
-  if (value === "—") return "余 --";
+  if (value === "—") return "永久";
   return unit ? `余 ${value}${unit}` : value;
 }
 

@@ -54,6 +54,7 @@ export function useNodeCardModel(
   const { meta, metrics, trafficTrend } = useNodeCardSnapshots(uuid);
   const {
     showCardGroup,
+    showCardPrice,
     fakePingForUnbound,
     homepagePingBindings,
     enableHomepageMultiPing,
@@ -153,11 +154,13 @@ export function useNodeCardModel(
       subtitle: joinDisplayParts(subtitleParts),
       expire: formatExpireDays(meta.expired_at, now),
       expireColor: getExpireTextColor(meta.expired_at, now),
+      // 「卡片显示价格」关掉后各档卡片都不再显示价格；小卡片另有未填时的占位文案。
+      showCardPrice,
       renewalPrice: formatRenewalPrice(meta),
       osName: resolveOsInfo(meta.os).name,
       loadBaseline: meta.cpu_cores > 0 ? meta.cpu_cores : 4,
     };
-  }, [meta, now, showCardGroup]);
+  }, [meta, now, showCardGroup, showCardPrice]);
 
   // ping 派生的颜色只在 ping item 变化时才变。
   const pingModel = useMemo(

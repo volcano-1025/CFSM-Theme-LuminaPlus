@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PingOverviewBucket } from "@/types/cfsm";
 import {
+  formatCompactExpire,
   healthBarInteractionModel,
   healthBarSlotModel,
 } from "@/components/node/nodeCardShared";
@@ -67,5 +68,17 @@ describe("healthBarSlotModel", () => {
       heightFraction: slot.heightFraction,
       alpha: slot.alpha,
     });
+  });
+});
+
+describe("formatCompactExpire", () => {
+  it("shows 永久 when no expiry date is set", () => {
+    // 之前显示 "余 --",看不出是"没填"还是"算不出来"。
+    expect(formatCompactExpire({ value: "—", unit: "" })).toBe("永久");
+  });
+
+  it("keeps the remaining-days form otherwise", () => {
+    expect(formatCompactExpire({ value: "12", unit: "天" })).toBe("余 12天");
+    expect(formatCompactExpire({ value: "长期", unit: "" })).toBe("长期");
   });
 });
