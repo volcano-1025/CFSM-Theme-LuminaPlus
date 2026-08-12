@@ -62,7 +62,16 @@ jobs:
         run: |
           set -euo pipefail
           version="v$(node -p "require('./package.json').version")"
-          note="${CHANGELOG:-$(git log -1 --pretty=%s)}"
+          # 优先级：手动填的 changelog > CHANGELOG.md 里对应版本的第一行 > 源码提交标题。
+          note="${CHANGELOG:-}"
+          if [ -z "${note}" ] && [ -f CHANGELOG.md ]; then
+            note="$(awk -v want="## ${version}" '
+              $0 == want { found = 1; next }
+              found && /^## / { exit }
+              found && NF { print; exit }
+            ' CHANGELOG.md)"
+          fi
+          [ -n "${note}" ] || note="$(git log -1 --pretty=%s)"
           {
             echo "message<<RELEASE_NOTE_EOF"
             echo "${version} ${note}"

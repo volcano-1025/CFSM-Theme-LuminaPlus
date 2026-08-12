@@ -83,9 +83,13 @@ v<package.json 的 version> <更新日志>
 build: <源码 commit>
 ```
 
-更新日志默认取本次源码提交的标题，所以**发版前把提交标题写成用户看得懂的一句话**；
-版本号跟着 `package.json` 走，发新版记得先改它。想单独补一条日志（产物没变化），
-在 Actions 里手动运行 workflow，填 `changelog` 并勾上 `force` 即可。
+发版流程：改 `package.json` 的 `version`，在 [CHANGELOG.md](CHANGELOG.md) 里加一段
+`## v<版本号>`，CI 会取该段的第一行当更新日志。没写就退回用本次源码提交的标题。
+想单独补一条日志（产物没变化），在 Actions 里手动运行 workflow，填 `changelog`
+并勾上 `force` 即可。
+
+产物 `index.html` 里还会写入 `<meta name="theme-version" content="LuminaPlus v...">`，
+线上看页面源码就能确认跑的是哪一版 —— 排查缓存问题时很有用。
 
 产物分支保留历史：每次构建是在分支上**追加**提交，不重建也不强推，
 因此锁在旧 SHA 的用户、以及主题商店 `versions[].commitid` 里记录的历史版本

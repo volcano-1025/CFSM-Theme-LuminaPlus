@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 import { defineConfig, type Plugin } from "vite";
+import pkg from "./package.json" with { type: "json" };
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -31,8 +32,32 @@ function devHostAssets(): Plugin {
   };
 }
 
+/**
+ * 把主题版本写进产物的 `<meta name="theme-version">`。
+ *
+ * 两个用处：出问题时能直接看页面源码确认线上跑的是哪一版（Workers 对分支地址有约一小时
+ * 缓存，很容易看到旧包）；版本号一改产物就变，CI 才会把这一版连同更新日志发到产物分支。
+ */
+function themeVersionMeta(version: string): Plugin {
+  return {
+    name: "cfsm-theme-version",
+    apply: "build",
+    transformIndexHtml(html) {
+      return html.replace(
+        "</head>",
+        `  <meta name="theme-version" content="LuminaPlus v${version}" />\n  </head>`,
+      );
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), devHostAssets()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    devHostAssets(),
+    themeVersionMeta(pkg.version),
+  ],
   // CF-Server-Monitor 的主题构建产物只能是 index.html + assets/，并且会被挂到站点根路径或
   // GitHub Pages 的子路径下，因此资源引用必须是相对路径。Worker 会把 `./assets/` 重写成
   // `/assets/` 再代理到主题仓库。
