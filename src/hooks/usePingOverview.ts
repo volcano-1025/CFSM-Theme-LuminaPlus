@@ -370,13 +370,15 @@ export function buildPingBuckets(
     const startAt = windowStart + index * bucketMs;
     const endAt = startAt + bucketMs;
     const total = totals[index];
-    const lost = Math.round(losts[index]);
+    // 丢包率按未取整的丢失量算：后端给的是百分比，先取整再求比例只会剩 0 和 100。
+    const lostExact = losts[index];
+    const lost = Math.round(lostExact);
     const positiveCount = positiveCounts[index];
 
     return {
       index,
       value: positiveCount > 0 ? positiveSums[index] / positiveCount : null,
-      loss: total > 0 ? (lost / total) * 100 : null,
+      loss: total > 0 ? (lostExact / total) * 100 : null,
       total,
       lost,
       startAt,

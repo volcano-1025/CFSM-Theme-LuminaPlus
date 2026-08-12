@@ -5,6 +5,9 @@ import type { PingRecord } from "@/types/cfsm";
  *
  * CF-Server-Monitor 的历史每行只有一次探测结果，`count` 恒为 1；`loss` 是该次采样的
  * 丢包百分比。`value < 0` 视为整点丢失。
+ *
+ * `lost` 保留小数：后端给的是百分比而不是丢了几个包，四舍五入成整数会把 33% 抹成 0、
+ * 把 50% 抹成 100%，聚合出来的丢包率只剩 0 和 100 两种值。
  */
 export function resolvePingSampleCounts(
   sample: Pick<PingRecord, "value" | "count" | "loss">,
@@ -16,7 +19,7 @@ export function resolvePingSampleCounts(
   const reportedLoss = sample.loss;
   const lost =
     typeof reportedLoss === "number" && Number.isFinite(reportedLoss)
-      ? Math.min(total, Math.max(0, Math.round((reportedLoss / 100) * total)))
+      ? Math.min(total, Math.max(0, (reportedLoss / 100) * total))
       : sample.value < 0
         ? total
         : 0;

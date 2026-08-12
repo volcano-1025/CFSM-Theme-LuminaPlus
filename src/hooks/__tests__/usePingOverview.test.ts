@@ -128,6 +128,24 @@ describe("buildPingBuckets", () => {
     expect(buckets[23]?.value).toBe(30);
   });
 
+  it("keeps partial packet loss instead of rounding it to 0 or 100", () => {
+    // 后端给的是百分比（6 个包丢 2 个 → 33），按"丢了几个包"四舍五入会把 33% 变成 0%、
+    // 50% 变成 100%，图上就只剩全绿和全红两种颜色。
+    const partial = buildPingBuckets(
+      buildPingOverviewItem("node-a", 1, [sample(1, { ct: 50, lossCt: 33 })]),
+      24,
+      NOW,
+    );
+    expect(partial[23]?.loss).toBeCloseTo(33, 5);
+
+    const half = buildPingBuckets(
+      buildPingOverviewItem("node-a", 1, [sample(1, { ct: 50, lossCt: 50 })]),
+      24,
+      NOW,
+    );
+    expect(half[23]?.loss).toBeCloseTo(50, 5);
+  });
+
   it("aggregates loss per bucket", () => {
     const buckets = buildPingBuckets(
       buildPingOverviewItem("node-a", 1, [sample(1, { ct: 50, lossCt: 100 })]),

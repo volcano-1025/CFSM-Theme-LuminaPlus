@@ -31,7 +31,10 @@ function formatLossBucketSummary(
 ) {
   if (!bucket) return "—";
   if (bucket.total <= 0 || bucket.loss == null) return "无样本";
-  return `${trimFixed(bucket.loss, 1)}%${separator}${bucket.lost}/${bucket.total}`;
+  // 后端每个采样点给的是丢包百分比而不是"丢了几个包"，写成 x/y 会误导，
+  // 这里只显示百分比与参与聚合的采样点数。
+  const count = Math.max(1, Math.round(bucket.total));
+  return `${trimFixed(bucket.loss, 1)}%${separator}${count} 次采样`;
 }
 
 export function formatHealthBucketTooltip(
