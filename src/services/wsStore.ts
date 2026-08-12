@@ -14,6 +14,7 @@ import {
   toNodeMetrics,
 } from "@/services/cfsm/mappers";
 import { createWsConnection, type WsConnection, type WsSample } from "@/services/cfsm/wsClient";
+import { recordPingSample, retainPingNodes } from "@/services/pingLiveStore";
 
 type Listener = () => void;
 
@@ -469,6 +470,8 @@ function applyRawUpdates(
     if (!raw || !previous) continue;
 
     const merged = carryForwardTotals(toNodeMetrics(raw, now, previous), previous);
+    // 首页延迟条按上报滚动累积，不再查历史接口。
+    recordPingSample(uuid, merged.updatedAt, merged.ping);
 
     if (!shallowEqualMetrics(previous, merged)) {
       if (nextMetricsByUuid === state.metricsByUuid) {
@@ -592,6 +595,7 @@ async function performServersSync() {
 
       const prevTrend = state.trafficTrends[uuid] ?? EMPTY_TRAFFIC_TREND;
       const metrics = metricsByUuid[uuid]!;
+      recordPingSample(uuid, metrics.updatedAt, metrics.ping);
       const nextUp = updateTrafficTrendSeries(
         prevTrend.up,
         metrics.netUp,
@@ -630,6 +634,9 @@ async function performServersSync() {
         const next = metaByUuid[uuid];
         return Boolean(prev?.hidden) !== Boolean(next?.hidden);
       });
+
+    // 节点被删除后连带清掉它的延迟缓冲区。
+    retainPingNodes(order);
 
     const sysConfigChanged = updateSysConfigSnapshot(snapshot.sysConfig);
     const storeStatusChanged =

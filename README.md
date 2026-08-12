@@ -61,7 +61,7 @@ npm run dev
 | 站点配置、登录态、主题预设 | `GET /api/config` |
 | 节点列表与实时指标 | `GET /api/servers` |
 | 实时推送 | `GET /api/ws?subscribe=all` + 通道内 `subscribe` 消息 |
-| 负载 / 延迟历史、今日流量 | `GET /api/history/all` |
+| 实例详情的负载 / 延迟历史、今日流量 | `GET /api/history/all` |
 
 WebSocket 断开时自动退回 5 秒轮询 `/api/servers`；多后端部署下每个后端只订阅属于自己的节点 ID。
 未登录访客查询超过 24 小时的历史会被后端拒绝，因此详情页只显示 24 小时以内的档位。
@@ -73,6 +73,12 @@ WebSocket 断开时自动退回 5 秒轮询 `/api/servers`；多后端部署下�
 - **延迟探测**：CF-Server-Monitor 的探测点固定为电信 / 联通 / 移动 / BD 四条线路，
   对应主题里的四个「任务」。未单独指定线路的节点默认显示电信；三网模式展示其中三条。
   探测目标在后台的服务器编辑里配置。
+- **首页延迟柱状图是实时累积的，不查历史**：`/api/history/all` 会扫该节点整段时间窗口的
+  历史行，首页给每台节点每分钟查一次会让后端 D1 读行翻几十倍（后端作者实测约 60 倍，
+  30 秒上报约 120 倍）。因此首页改用 `/api/servers` 与 WebSocket 推送里本来就带的
+  `ping_*` / `loss_*` 实时值，在浏览器里滚动累积成图表，对后端零额外请求。
+  缓冲区会写进 localStorage（保留一小时），刷新后立刻接上；全新节点会先空着、随上报填满。
+  实例详情页的延迟图表仍读历史 —— 那是用户主动打开、单节点一次的请求。
 - **今日流量是估算值**：后端历史只保存上/下行**瞬时速率**，没有累计计数器，
   所以今日流量由速率按采样间隔积分得到；采样越稀疏误差越大。单个采样点最多按 10 分钟积分，
   避免探针掉线的时间空洞凭空造出流量。流量配额进度用的是后端的月度累计值，不受此影响。
@@ -104,6 +110,7 @@ npm run build       # 产物只含 index.html + assets/
 - `src/services/cfsm/wsClient.ts` — `/api/ws` 订阅与重连
 - `src/services/api.ts` — 各页面用到的查询函数
 - `src/services/wsStore.ts` — 节点状态 store（列表 + 实时合并 + 轮询兜底）
+- `src/services/pingLiveStore.ts` — 首页延迟条的实时缓冲区（含 localStorage 持久化）
 
 ## 致谢
 

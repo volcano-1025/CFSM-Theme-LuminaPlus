@@ -4,7 +4,6 @@ import {
   clearHistoryCache,
   getLoadRecords,
   getMe,
-  getPingOverview,
   getPingRecords,
   getPublic,
   getServersSnapshot,
@@ -314,41 +313,5 @@ describe("getPingRecords", () => {
     const { records } = await getPingRecords("node-a", 6);
 
     expect(records.map((record) => record.task_id)).toEqual([1, 3]);
-  });
-});
-
-describe("getPingOverview", () => {
-  it("fetches each node once and filters to the requested carrier", async () => {
-    fetchMock.mockImplementation(jsonReply([historyRow()]));
-
-    const overview = await getPingOverview(1, 2, { entityIds: ["node-a", "node-b"] });
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(overview.records.every((record) => record.task_id === 2)).toBe(true);
-    expect(overview.records.map((record) => record.client).sort()).toEqual([
-      "node-a",
-      "node-b",
-    ]);
-  });
-
-  it("serves the other carriers from cache instead of refetching", async () => {
-    fetchMock.mockImplementation(jsonReply([historyRow()]));
-
-    await getPingOverview(1, 1, { entityIds: ["node-a"] });
-    await getPingOverview(1, 3, { entityIds: ["node-a"] });
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps working when one node's history fails", async () => {
-    fetchMock.mockImplementation(async (url: string) =>
-      url.includes("node-b")
-        ? jsonResponse({ error: "boom", code: 500 }, 500)
-        : jsonResponse([historyRow()]),
-    );
-
-    const overview = await getPingOverview(1, 1, { entityIds: ["node-a", "node-b"] });
-
-    expect(overview.records.map((record) => record.client)).toEqual(["node-a"]);
   });
 });
