@@ -21,11 +21,22 @@ export interface PingLiveSample {
 
 type Listener = () => void;
 
-/** 一小时窗口 / 每分钟一次上报，64 个样本足够铺满首页图表。 */
-const MAX_SAMPLES_PER_NODE = 64;
-/** 持久化时每台节点只留最近这些样本，控制 localStorage 体积。 */
-const MAX_PERSISTED_SAMPLES = 24;
-const MAX_PERSISTED_NODES = 200;
+/**
+ * 两次采样之间的最小间隔。
+ *
+ * WebSocket 每 5 秒推一批，但探针默认 60 秒才测一次 ping，多数批次里的 ping 值是重复的。
+ * 首页图表又是按 150 秒一格聚合的，采样比 ~75 秒更密不会带来任何可见差异，
+ * 却会让固定长度的缓冲区只覆盖几分钟。这里按 50 秒节流：60 秒上报时每次上报采一个点，
+ * 30 秒上报时隔一次采一个点，每格仍有 2~3 个样本。
+ */
+const MIN_SAMPLE_GAP_MS = 50_000;
+/** 值发生变化时允许更快记录，但仍要防住 5 秒一批的抖动。 */
+const MIN_CHANGED_SAMPLE_GAP_MS = 20_000;
+/** 50 秒一个样本时，96 条覆盖 80 分钟，足够铺满一小时的图表。 */
+const MAX_SAMPLES_PER_NODE = 96;
+/** 持久化保留同样的条数，这样一小时内回来能直接接上完整图表。 */
+const MAX_PERSISTED_SAMPLES = 96;
+const MAX_PERSISTED_NODES = 100;
 const SAMPLE_TTL_MS = 60 * 60 * 1000;
 const STORAGE_KEY = "cfsm-luminaplus:ping-live:v1";
 const PERSIST_DEBOUNCE_MS = 15_000;
@@ -45,6 +56,19 @@ function hasAnyValue(ping: CarrierPingSnapshot): boolean {
 
 function isFresh(sample: PingLiveSample, now: number): boolean {
   return sample.time > 0 && now - sample.time <= SAMPLE_TTL_MS;
+}
+
+function samePing(a: CarrierPingSnapshot, b: CarrierPingSnapshot): boolean {
+  return (
+    a.ct === b.ct &&
+    a.cu === b.cu &&
+    a.cm === b.cm &&
+    a.bd === b.bd &&
+    a.lossCt === b.lossCt &&
+    a.lossCu === b.lossCu &&
+    a.lossCm === b.lossCm &&
+    a.lossBd === b.lossBd
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -179,7 +203,8 @@ function emit(uuid: string): void {
 }
 
 /**
- * 记录一次上报。同一个上报时间只记一次，因此调用方可以在每帧无脑调用。
+ * 记录一次上报。重复的上报时间、以及节流窗口内的重复值都会被忽略，
+ * 因此调用方可以在每次收到推送时无脑调用。
  */
 export function recordPingSample(
   uuid: string,
@@ -192,7 +217,15 @@ export function recordPingSample(
   hydrate();
   const previous = samplesByUuid.get(uuid) ?? EMPTY_SAMPLES;
   const last = previous[previous.length - 1];
-  if (last && last.time >= time) return;
+  if (last) {
+    if (last.time >= time) return;
+    const gap = time - last.time;
+    // 值没变就按正常节奏采样；值变了可以早一点记录，但仍要防住 5 秒一批的抖动。
+    const minGap = samePing(last.ping, ping)
+      ? MIN_SAMPLE_GAP_MS
+      : MIN_CHANGED_SAMPLE_GAP_MS;
+    if (gap < minGap) return;
+  }
 
   const now = Date.now();
   const next = [...previous.filter((sample) => isFresh(sample, now)), { time, ping }];

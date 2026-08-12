@@ -36,6 +36,40 @@ describe("recordPingSample", () => {
     expect(samples.map((sample) => sample.ping.ct)).toEqual([30, 32]);
   });
 
+  it("throttles the 5s websocket batches that repeat the same reading", () => {
+    // 探针 60 秒才测一次，推送却是 5 秒一批：重复值不该占满缓冲区。
+    for (let i = 0; i < 12; i++) {
+      recordPingSample("node-a", NOW + i * 5_000, ping({ ct: 30 }));
+    }
+
+    expect(getPingHistorySnapshot("node-a")).toHaveLength(2);
+  });
+
+  it("records a changed reading sooner than the idle throttle", () => {
+    recordPingSample("node-a", NOW, ping({ ct: 30 }));
+    recordPingSample("node-a", NOW + 25_000, ping({ ct: 80 }));
+
+    expect(getPingHistorySnapshot("node-a").map((s) => s.ping.ct)).toEqual([30, 80]);
+  });
+
+  it("still ignores a changed reading inside the same push batch", () => {
+    recordPingSample("node-a", NOW, ping({ ct: 30 }));
+    recordPingSample("node-a", NOW + 5_000, ping({ ct: 80 }));
+
+    expect(getPingHistorySnapshot("node-a")).toHaveLength(1);
+  });
+
+  it("keeps a full hour of samples at the default 60s report interval", () => {
+    for (let i = 0; i < 60; i++) {
+      recordPingSample("node-a", NOW + i * 60_000, ping({ ct: 30 }));
+    }
+
+    const samples = getPingHistorySnapshot("node-a");
+    expect(samples).toHaveLength(60);
+    // 首尾跨度覆盖整整一小时，图表 24 格能填满。
+    expect(samples.at(-1)!.time - samples[0]!.time).toBe(59 * 60_000);
+  });
+
   it("ignores repeats of the same report, so callers can call it every frame", () => {
     recordPingSample("node-a", NOW, ping({ ct: 30 }));
     const first = getPingHistorySnapshot("node-a");
@@ -57,6 +91,19 @@ describe("recordPingSample", () => {
     expect(getPingHistorySnapshot("node-a")).toEqual([]);
   });
 
+  it("restores a whole hour of samples, not just the last few minutes", () => {
+    for (let i = 0; i < 60; i++) {
+      recordPingSample("node-a", NOW - (59 - i) * 60_000, ping({ ct: 30 + i }));
+    }
+    vi.advanceTimersByTime(20_000);
+
+    resetPingLiveStore();
+    const restored = getPingHistorySnapshot("node-a");
+
+    expect(restored).toHaveLength(60);
+    expect(restored.at(-1)!.time - restored[0]!.time).toBe(59 * 60_000);
+  });
+
   it("drops samples that fall out of the one-hour window", () => {
     recordPingSample("node-a", NOW - 2 * 60 * 60_000, ping({ ct: 10 }));
     recordPingSample("node-a", NOW, ping({ ct: 20 }));
@@ -65,11 +112,11 @@ describe("recordPingSample", () => {
   });
 
   it("caps the buffer instead of growing without bound", () => {
-    for (let i = 0; i < 120; i++) {
-      recordPingSample("node-a", NOW - (120 - i) * 1000, ping({ ct: i }));
+    for (let i = 0; i < 400; i++) {
+      recordPingSample("node-a", NOW + i * 60_000, ping({ ct: i % 90 }));
     }
 
-    expect(getPingHistorySnapshot("node-a").length).toBeLessThanOrEqual(64);
+    expect(getPingHistorySnapshot("node-a").length).toBeLessThanOrEqual(96);
   });
 
   it("notifies subscribers of the affected node only", () => {
