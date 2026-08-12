@@ -1173,9 +1173,8 @@ export function ThemeManage() {
             <span className="theme-masthead-kicker">LUMINAPLUS · 主题控制台</span>
             <h1 className="theme-masthead-title">主题设置</h1>
             <p className="theme-masthead-desc">
-              集中调整 LuminaPlus 的展示偏好与首页延迟线路；设置保存在本机浏览器，只影响当前设备。
-              需要所有设备与访客统一，点右上角「复制配置 JSON」，粘贴到后台「外观设置 →
-              主题自定义配置」保存即可。
+              设置保存在本机浏览器，只影响当前设备；要让所有设备与访客统一，
+              用右上角「复制配置 JSON」粘到后台「外观设置 → 主题自定义配置」。
             </p>
           </div>
           <dl className="theme-masthead-meta">

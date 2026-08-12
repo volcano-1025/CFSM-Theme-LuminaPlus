@@ -154,7 +154,8 @@ export function useNodeCardModel(
       subtitle: joinDisplayParts(subtitleParts),
       expire: formatExpireDays(meta.expired_at, now),
       expireColor: getExpireTextColor(meta.expired_at, now),
-      // 「卡片显示价格」关掉后各档卡片都不再显示价格；小卡片另有未填时的占位文案。
+      // 「卡片显示价格」只作用于大卡片（NodeCard 自己收敛）；小卡片等布局照旧显示，
+      // 未填价格显示「免费」。
       showCardPrice,
       renewalPrice: formatRenewalPrice(meta),
       osName: resolveOsInfo(meta.os).name,

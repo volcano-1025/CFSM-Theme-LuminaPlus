@@ -413,8 +413,7 @@ export const MiniNodeCard = memo(function MiniNodeCard({
     ping,
     pingBuckets,
     footerTags,
-    renewalPrice: metaRenewalPrice,
-    showCardPrice,
+    renewalPrice,
     latencyColor,
     lossColor,
     loadFraction,
@@ -426,8 +425,6 @@ export const MiniNodeCard = memo(function MiniNodeCard({
     isOffline,
     osName,
   } = model;
-  // 「卡片显示价格」关掉后不渲染价格 chip。
-  const renewalPrice = showCardPrice ? metaRenewalPrice : null;
 
   return (
     <article className={clsx("mini-node-card", isOffline && "is-offline")}>

@@ -245,8 +245,7 @@ const NodeRow = memo(function NodeRow({ uuid }: { uuid: string }) {
     expire,
     expireColor,
     uptime,
-    renewalPrice: metaRenewalPrice,
-    showCardPrice,
+    renewalPrice,
     latencyColor,
     hasRealHomepagePingBinding,
     loadFraction,
@@ -255,8 +254,6 @@ const NodeRow = memo(function NodeRow({ uuid }: { uuid: string }) {
     isOffline,
     osName,
   } = model;
-  // 「卡片显示价格」关掉后不渲染价格 chip。
-  const renewalPrice = showCardPrice ? metaRenewalPrice : null;
   const listPingState = resolveListPingState(
     ping.loadState,
     hasRealHomepagePingBinding,
