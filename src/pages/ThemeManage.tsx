@@ -6,6 +6,8 @@ import {
   ChevronDown,
   ChevronUp,
   CircleDollarSign,
+  ClipboardCheck,
+  ClipboardCopy,
   Eraser,
   EyeOff,
   Grid3x3,
@@ -36,6 +38,7 @@ import {
   resetLocalThemeSettings,
   saveLocalThemeSettings,
 } from "@/services/themeSettingsStore";
+import { copyText } from "@/utils/clipboard";
 import { THEME_NAME } from "@/utils/themeMeta";
 import type { NodeInfo, PingTask, ThemeSettings } from "@/types/cfsm";
 import {
@@ -676,6 +679,7 @@ export function ThemeManage() {
   const [nodeSearch, setNodeSearch] = useState("");
   const [premiumSearch, setPremiumSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const savingDraftRef = useRef<ThemeDraft | null>(null);
@@ -1021,6 +1025,37 @@ export function ThemeManage() {
     }
   };
 
+  /**
+   * 当前设置导出成后台「主题自定义配置」能直接粘贴的 JSON。
+   *
+   * 第三方主题不能写后端设置，多设备同步只能走这条路：复制 → 粘进后台 → 所有设备（以及
+   * 所有访客）都以它为默认值。导出的是完整快照，包含配色等本页之外的设置。
+   */
+  const siteDefaultsJson = useMemo(
+    () =>
+      JSON.stringify(
+        normalizeThemeSettings({
+          ...getLocalThemeSettings(),
+          ...draftThemeSettings,
+        } as ThemeSettings & Record<string, unknown>),
+        null,
+        2,
+      ),
+    [draftThemeSettings],
+  );
+
+  const handleCopySiteDefaults = async () => {
+    setError(null);
+    if (await copyText(siteDefaultsJson)) {
+      setCopied(true);
+      setMessage("配置 JSON 已复制，粘贴到后台「外观设置 → 主题自定义配置」保存即可成为所有设备的默认值");
+      window.setTimeout(() => setCopied(false), 2000);
+      return;
+    }
+    setMessage(null);
+    setError("复制失败，请检查浏览器的剪贴板权限");
+  };
+
   const handleReset = () => {
     seedDrafts(sourceThemeSettings);
     setMessage(null);
@@ -1092,6 +1127,15 @@ export function ThemeManage() {
             返回首页
           </Link>
           <div className="theme-manage-toolbar-actions">
+            <button
+              type="button"
+              onClick={() => void handleCopySiteDefaults()}
+              className="theme-manage-button"
+              title="复制当前设置的 JSON；粘贴到后台「外观设置 → 主题自定义配置」即可让所有设备用同一套配置"
+            >
+              {copied ? <ClipboardCheck size={14} /> : <ClipboardCopy size={14} />}
+              <span>{copied ? "已复制" : "复制配置 JSON"}</span>
+            </button>
             <button
               type="button"
               onClick={handleReset}

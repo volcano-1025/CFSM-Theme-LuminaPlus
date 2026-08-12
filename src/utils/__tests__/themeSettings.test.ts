@@ -68,4 +68,20 @@ describe("normalizeThemeSettings", () => {
       normalizeThemeSettings({ hiddenNodes: "节点A, 节点A\nuuid-1；节点B" } as never).hiddenNodes,
     ).toEqual(["节点A", "uuid-1", "节点B"]);
   });
+
+  it("round-trips its own output, so the copied JSON can be pasted into theme_options", () => {
+    // 设置页的「复制配置 JSON」导出的就是这份快照，站长粘进后台后主题会再归一化一次读回来；
+    // 不幂等的话，同步一次配置就会悄悄漂移。
+    const snapshot = normalizeThemeSettings({
+      defaultAppearance: "dark",
+      desktopNodeViewMode: "compact",
+      enableHomepageMultiPing: true,
+      homepageMultiPingTaskIds: [1, 2, 3],
+      hiddenNodes: "节点A, 节点B",
+      surfaceOpacity: 0.72,
+    } as never);
+    const pasted = normalizeThemeSettings(JSON.parse(JSON.stringify(snapshot)) as never);
+
+    expect(pasted).toEqual(snapshot);
+  });
 });
