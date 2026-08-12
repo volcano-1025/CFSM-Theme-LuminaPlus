@@ -6,10 +6,24 @@ name: Build theme
 #
 # preview 分支同理，产物发到 dist-preview，用来在后台临时切地址验收，
 # 不会动到线上用的 dist。
+#
+# 产物提交的说明就是主题商店里的「更新日志」和版本下拉的标题，格式是
+#   v<package.json 的 version> <更新日志>
+# 更新日志默认取本次源码提交的标题；手动触发时可以在 changelog 里另写一句。
 on:
   push:
     branches: [main, preview]
   workflow_dispatch:
+    inputs:
+      changelog:
+        description: "更新日志（留空则用最近一次源码提交的标题）"
+        required: false
+        type: string
+      force:
+        description: "产物没变化也发布一版（只想改更新日志时用）"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -39,6 +53,24 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+
+      # 版本号来自 package.json，发布新版本前记得 npm version / 手改一下。
+      - name: Compose release note
+        id: note
+        env:
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          set -euo pipefail
+          version="v$(node -p "require('./package.json').version")"
+          note="${CHANGELOG:-$(git log -1 --pretty=%s)}"
+          {
+            echo "message<<RELEASE_NOTE_EOF"
+            echo "${version} ${note}"
+            echo
+            echo "build: ${GITHUB_SHA::7}"
+            echo "RELEASE_NOTE_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "本次产物说明：${version} ${note}"
 
       - name: Install dependencies
         run: npm ci
@@ -74,6 +106,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_BRANCH: ${{ steps.target.outputs.branch }}
+          RELEASE_NOTE: ${{ steps.note.outputs.message }}
+          FORCE_PUBLISH: ${{ inputs.force }}
         run: |
           set -euo pipefail
           remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -95,10 +129,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then
-            echo "产物与上次一致，跳过发布：$(git rev-parse HEAD)"
-            exit 0
+            if [ "${FORCE_PUBLISH}" != "true" ]; then
+              echo "产物与上次一致，跳过发布：$(git rev-parse HEAD)"
+              exit 0
+            fi
+            # 只想给商店补一条更新日志时，用同样的产物再发一版。
+            git commit -q --allow-empty -m "${RELEASE_NOTE}"
+          else
+            git commit -q -m "${RELEASE_NOTE}"
           fi
-          git commit -q -m "build: ${GITHUB_SHA::7}"
           git push -q origin "HEAD:${TARGET_BRANCH}"
           echo "已发布到 ${TARGET_BRANCH} 分支：${GITHUB_SHA::7}"
           echo "产物 commit（可用于主题商店 versions[].commitid）：$(git rev-parse HEAD)"
