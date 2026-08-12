@@ -325,7 +325,8 @@ export function buildPingBuckets(
       ? Math.min(MAX_SAMPLE_HOLD_MS, Math.max(metricIntervalMs, bucketMs) * 2)
       : 0;
 
-  for (const sample of ping.samples ?? []) {
+  const samples = ping.samples ?? [];
+  for (const [order, sample] of samples.entries()) {
     if (sample.time > now) continue;
 
     const coverEnd = Math.max(
@@ -338,12 +339,17 @@ export function buildPingBuckets(
     );
     if (coverEnd <= windowStart) continue;
 
+    // 最老的一个样本向前补一个采样间隔：后端窗口跨度是 58 分钟、图表画的是 60 分钟，
+    // 不补的话最左边那格永远差一点点数据，看起来像缺了一格。
+    const coverStart =
+      order === 0 ? Math.max(sample.time - metricIntervalMs, windowStart) : sample.time;
+
     // 覆盖区间跨过哪些 bucket 的中点，就填哪些 —— 相当于 sample-and-hold，
     // 柱宽不随节点变化，也不会因为 bucket 边界对不齐而漏格。
     let assigned = false;
     for (let index = 0; index < resolvedCount; index += 1) {
       const midpoint = windowStart + (index + 0.5) * bucketMs;
-      if (midpoint >= sample.time && midpoint < coverEnd) {
+      if (midpoint >= coverStart && midpoint < coverEnd) {
         addSampleToBucket(index, sample);
         assigned = true;
       }
@@ -351,7 +357,7 @@ export function buildPingBuckets(
     if (assigned) continue;
 
     // 覆盖区间比一个 bucket 还短（或正好错过中点）时，落到它自己所在的那格。
-    const overlapStart = Math.max(sample.time, windowStart);
+    const overlapStart = Math.max(coverStart, windowStart);
     const overlapEnd = Math.max(Math.min(coverEnd, now), overlapStart);
     const center = overlapStart + (overlapEnd - overlapStart) / 2;
     let bucketIndex = Math.floor((center - windowStart) / bucketMs);

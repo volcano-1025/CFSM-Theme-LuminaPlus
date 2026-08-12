@@ -155,6 +155,22 @@ describe("buildPingBuckets", () => {
     expect(filled.slice(filled.indexOf("#"))).not.toContain(".");
   });
 
+  it("fills the leftmost bucket when the window is slightly shorter than an hour", () => {
+    // 后端窗口是 30 个点 × 2 分钟 = 58 分钟，图表画 60 分钟：
+    // 最老的点大约在 59 分钟前，比第一格的中点还新，不补就永远空第一格。
+    const samples = Array.from({ length: 30 }, (_, index) =>
+      sample(0.5 + (29 - index) * 2, { ct: 40 }),
+    );
+    const buckets = buildPingBuckets(
+      buildPingOverviewItem("node-a", 1, samples),
+      24,
+      NOW,
+    );
+
+    expect(buckets[0]?.total).toBeGreaterThan(0);
+    expect(buckets.every((bucket) => bucket.total > 0)).toBe(true);
+  });
+
   it("keeps a real gap where the window reported no measurement", () => {
     // 槽位存在但该线路没值（节点掉线/探测失败）是真的空档，不能被相邻样本填平。
     const samples = [
