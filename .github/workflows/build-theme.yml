@@ -14,7 +14,7 @@ on:
 permissions:
   contents: write
 
-# 连续推送时只保留最后一次构建，避免两个 job 抢着 force-push 同一个分支。
+# 连续推送时只保留最后一次构建，避免两个 job 抢着往同一个分支推。
 # main 与 preview 各自排队，互不打断。
 concurrency:
   group: build-theme-${{ github.ref_name }}
@@ -67,20 +67,38 @@ jobs:
             exit 1
           fi
 
+      # 产物分支必须保留历史：主题商店的 versions[].commitid 指向某次构建的 commit，
+      # 用户也可能把主题地址锁在 40 位 SHA 上。一旦 force-push 覆盖，这些旧地址就会失效，
+      # 所以这里是在已有分支上追加提交，不重建、不强推。
       - name: Publish build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_BRANCH: ${{ steps.target.outputs.branch }}
         run: |
           set -euo pipefail
-          cd dist
-          # 产物分支是纯产物，每次重建覆盖，不保留历史。
-          git init -q -b "${TARGET_BRANCH}"
+          remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          workdir="${RUNNER_TEMP}/publish"
+
+          # 已有产物分支就克隆下来接着提交；第一次发布时该分支还不存在。
+          if ! git clone -q --branch "${TARGET_BRANCH}" --single-branch "${remote}" "${workdir}"; then
+            echo "${TARGET_BRANCH} 还不存在，创建新分支"
+            git init -q -b "${TARGET_BRANCH}" "${workdir}"
+            git -C "${workdir}" remote add origin "${remote}"
+          fi
+
+          # 换成本次产物：删掉除 .git 外的所有旧文件，再整包拷入。
+          find "${workdir}" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R dist/. "${workdir}/"
+
+          cd "${workdir}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
+          if git diff --cached --quiet; then
+            echo "产物与上次一致，跳过发布：$(git rev-parse HEAD)"
+            exit 0
+          fi
           git commit -q -m "build: ${GITHUB_SHA::7}"
-          git push -q --force \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            "${TARGET_BRANCH}:${TARGET_BRANCH}"
+          git push -q origin "HEAD:${TARGET_BRANCH}"
           echo "已发布到 ${TARGET_BRANCH} 分支：${GITHUB_SHA::7}"
+          echo "产物 commit（可用于主题商店 versions[].commitid）：$(git rev-parse HEAD)"
