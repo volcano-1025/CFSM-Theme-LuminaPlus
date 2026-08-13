@@ -8,7 +8,7 @@ import {
   CircleDollarSign,
   ClipboardCheck,
   ClipboardCopy,
-  Eraser,
+  CloudDownload,
   EyeOff,
   Grid3x3,
   LayoutTemplate,
@@ -1065,12 +1065,17 @@ export function ThemeManage() {
     setError(null);
   };
 
-  /** 清掉本地覆盖，回到后端 theme_options + 主题默认值。 */
+  /**
+   * 清掉本地覆盖，回到后端 theme_options + 主题默认值。
+   *
+   * 对站长来说这就是「同步后台配置」：本机存过的设置只要还在，后台改的 JSON 就永远压不过来
+   * （合并规则是本地覆盖优先），必须先把本地那份丢掉。
+   */
   const handleRestoreSiteDefaults = () => {
     resetLocalThemeSettings();
     // 表单同步回站点默认值：否则会留下一份"已被清除但仍显示"的脏草稿。
     seedDrafts(normalizeThemeSettings(config?.theme_settings));
-    setMessage("已清除本机设置，恢复站点默认值");
+    setMessage("已丢弃本机设置，改用后台最新的配置 JSON");
     setError(null);
   };
 
@@ -1132,15 +1137,6 @@ export function ThemeManage() {
           <div className="theme-manage-toolbar-actions">
             <button
               type="button"
-              onClick={() => void handleCopySiteDefaults()}
-              className="theme-manage-button"
-              title="复制当前设置的 JSON；粘贴到后台「外观设置 → 主题自定义配置」即可让所有设备用同一套配置"
-            >
-              {copied ? <ClipboardCheck size={14} /> : <ClipboardCopy size={14} />}
-              <span>{copied ? "已复制" : "复制配置 JSON"}</span>
-            </button>
-            <button
-              type="button"
               onClick={handleReset}
               disabled={!isDirty || saving}
               className="theme-manage-button"
@@ -1150,13 +1146,22 @@ export function ThemeManage() {
             </button>
             <button
               type="button"
+              onClick={() => void handleCopySiteDefaults()}
+              className="theme-manage-button"
+              title="复制当前设置的 JSON；粘贴到后台「外观设置 → 主题自定义配置」即可让所有设备用同一套配置"
+            >
+              {copied ? <ClipboardCheck size={14} /> : <ClipboardCopy size={14} />}
+              <span>{copied ? "已复制" : "复制配置 JSON"}</span>
+            </button>
+            <button
+              type="button"
               onClick={handleRestoreSiteDefaults}
               disabled={saving}
               className="theme-manage-button"
-              title="清除本机保存的主题设置，回到站点默认值"
+              title="丢弃本机保存的主题设置（含配色），改用后台「外观设置 → 主题自定义配置」里最新的 JSON"
             >
-              <Eraser size={14} />
-              <span>恢复站点默认</span>
+              <CloudDownload size={14} />
+              <span>同步后台配置</span>
             </button>
             <button
               type="button"
