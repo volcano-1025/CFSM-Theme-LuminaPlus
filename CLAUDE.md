@@ -48,5 +48,10 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-v1.1.0 已发布并在主题商店上架（`dist` = 产物分支）。下一步没有排期的功能，
+v1.2.1 已发布并在主题商店上架（`dist` = 产物分支）。下一步没有排期的功能，
 以线上反馈的修复为主。
+
+设置页的「复制配置 JSON」导出的是**归一化白名单 + 配色**两部分：白名单见
+`normalizeThemeSettings()`，取色器的 `metricColors` / `darkDepth` 不在其中，由
+`pickPaletteSettings()` 单独并进快照。配色只导用户改过的项，没改过的沿用主题默认
+token（这样主题以后调默认配色，站点会跟着走）—— 加新的非白名单设置时记得一并考虑导出。
