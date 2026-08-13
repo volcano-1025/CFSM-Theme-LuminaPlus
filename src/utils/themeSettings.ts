@@ -17,6 +17,7 @@ import {
   type HomeSortField,
 } from "@/utils/homeSort";
 import {
+  DEFAULT_HOMEPAGE_MULTI_PING_TASK_IDS,
   normalizeHomepageMultiPingTaskIds,
   normalizeHomepagePingTaskBindings,
   type HomepagePingTaskBindings,
@@ -72,8 +73,8 @@ export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
   enableAdminButton: true,
   showPingChart: true,
   homepagePingBindings: {},
-  enableHomepageMultiPing: false,
-  homepageMultiPingTaskIds: [],
+  enableHomepageMultiPing: true,
+  homepageMultiPingTaskIds: [...DEFAULT_HOMEPAGE_MULTI_PING_TASK_IDS],
   fakePingForUnbound: false,
   showHomeOverview: true,
   showGroupTabs: true,
@@ -164,9 +165,12 @@ function normalizeHomeSortDefault(
 export function normalizeThemeSettings(
   settings: (ThemeSettings & Record<string, unknown>) | null | undefined,
 ): ResolvedThemeSettings {
-  const homepageMultiPingTaskIds = normalizeHomepageMultiPingTaskIds(
-    settings?.homepageMultiPingTaskIds,
-  );
+  // 没配过就给电信/联通/移动三条线路：三网模式默认开着，缺了任务 id 会静默退回单线路，
+  // 站长会以为开关没生效。显式配过（哪怕只选了两条）就尊重原值，让设置页能提示补齐。
+  const homepageMultiPingTaskIds =
+    settings?.homepageMultiPingTaskIds == null
+      ? [...DEFAULT_HOMEPAGE_MULTI_PING_TASK_IDS]
+      : normalizeHomepageMultiPingTaskIds(settings.homepageMultiPingTaskIds);
   return {
     defaultAppearance: normalizeAppearance(settings?.defaultAppearance),
     desktopNodeViewMode: normalizeNodeViewMode(
@@ -180,8 +184,9 @@ export function normalizeThemeSettings(
     enableAdminButton: enabledUnlessFalse(settings?.enableAdminButton),
     showPingChart: enabledUnlessFalse(settings?.showPingChart),
     homepagePingBindings: normalizeHomepagePingTaskBindings(settings?.homepagePingBindings),
-    // 保留开关原值，让管理页能呈现并修复不完整配置；首页消费方仅在任务恰好为三项时启用。
-    enableHomepageMultiPing: settings?.enableHomepageMultiPing === true,
+    // 默认开：多数站点想要的就是三网对比。保留开关原值（含显式 false），让管理页能呈现
+    // 并修复不完整配置；首页消费方仍只在任务恰好为三项时启用。
+    enableHomepageMultiPing: enabledUnlessFalse(settings?.enableHomepageMultiPing),
     homepageMultiPingTaskIds,
     // 默认关闭(需手动开启):给访客展示的是模拟数据,必须由站长显式决定。
     fakePingForUnbound: settings?.fakePingForUnbound === true,

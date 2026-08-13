@@ -7,6 +7,12 @@ export const HOMEPAGE_MULTI_PING_TASK_COUNT = 3;
  */
 export const DEFAULT_HOMEPAGE_PING_TASK_ID = 1;
 
+/**
+ * 三网模式的默认三条线路：电信 / 联通 / 移动（BD 不在其中）。
+ * 线路 id 由 CARRIER_TASKS 固定，不会因站点而异，所以可以硬编码成默认值。
+ */
+export const DEFAULT_HOMEPAGE_MULTI_PING_TASK_IDS: readonly number[] = [1, 2, 3];
+
 const invertedBindingsCache = new WeakMap<HomepagePingTaskBindings, Map<string, number>>();
 
 function parseTaskId(taskId: string) {

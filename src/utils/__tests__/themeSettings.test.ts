@@ -25,7 +25,17 @@ describe("normalizeThemeSettings", () => {
   });
 
   it("normalizes homepage multi-ping tasks while preserving an enabled draft for repair", () => {
-    expect(normalizeThemeSettings({}).enableHomepageMultiPing).toBe(false);
+    // 默认开三网，并补上电信/联通/移动 —— 少了任务 id 会静默退回单线路。
+    const untouched = normalizeThemeSettings({});
+    expect(untouched.enableHomepageMultiPing).toBe(true);
+    expect(untouched.homepageMultiPingTaskIds).toEqual([1, 2, 3]);
+    expect(normalizeThemeSettings({ enableHomepageMultiPing: false }).enableHomepageMultiPing).toBe(
+      false,
+    );
+    // 显式配过就尊重原值（哪怕不足三条），让设置页提示补齐而不是被默认值盖掉。
+    expect(
+      normalizeThemeSettings({ homepageMultiPingTaskIds: [] }).homepageMultiPingTaskIds,
+    ).toEqual([]);
     expect(
       normalizeThemeSettings({
         enableHomepageMultiPing: true,

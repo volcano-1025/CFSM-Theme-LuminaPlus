@@ -61,6 +61,7 @@ import {
   sortHomeGroupOptions,
 } from "@/utils/homeNodes";
 import {
+  DEFAULT_HOMEPAGE_PING_TASK_ID,
   HOMEPAGE_MULTI_PING_TASK_COUNT,
   normalizeHomepageMultiPingTaskIds,
   normalizeHomepagePingTaskBindings,
@@ -155,7 +156,7 @@ function summarizeNodes(
   uuids: string[],
   clientsById: Map<string, NodeInfo>,
 ) {
-  if (uuids.length === 0) return "未绑定节点";
+  if (uuids.length === 0) return "点右侧「编辑节点」把节点加进来";
   const names = uuids.map((uuid) => clientsById.get(uuid)?.name || uuid);
   const summary = names.join("、");
   return summary.length > 92 ? `${summary.slice(0, 92)}...` : summary;
@@ -398,6 +399,9 @@ const TaskBindingSection = memo(function TaskBindingSection({
   ) => void;
 }) {
   const assignedSummary = summarizeNodes(assigned, clientsById);
+  // 探测点是后端固定的四条线路，没绑定的节点会落到默认线路（电信），这里标出来免得站长
+  // 以为「0 个节点」就是没人用它。
+  const isDefaultTask = task.id === DEFAULT_HOMEPAGE_PING_TASK_ID;
   // 过滤只有展开的任务需要;收起的卡片跳过,搜索输入不再对每个任务做 O(clients) 扫描。
   const selectableVisibleClients = expanded
     ? visibleClients.filter((client) => {
@@ -416,22 +420,24 @@ const TaskBindingSection = memo(function TaskBindingSection({
             <h3 className="text-[15px] font-semibold text-[var(--text-primary)]">
               {task.name || `任务 #${task.id}`}
             </h3>
-            <span className="rounded-full border border-[var(--hairline)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
-              {task.type || "icmp"}
-            </span>
-            <span className="rounded-full border border-[var(--hairline)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-tertiary)]">
-              {task.interval}s
-            </span>
-            <span className="rounded-full border border-[var(--hairline)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-tertiary)]">
-              ID {task.id}
-            </span>
+            {isDefaultTask && (
+              <span className="rounded-full border border-[var(--hairline)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-tertiary)]">
+                默认线路
+              </span>
+            )}
           </div>
           <div className="mt-2 text-[12px] text-[var(--text-secondary)]">
             <span className="font-medium text-[var(--text-primary)]">
-              已绑定 {assigned.length} 个节点
+              {assigned.length > 0
+                ? `${assigned.length} 台节点在首页显示这条线路的延迟`
+                : "还没有节点选这条线路"}
             </span>
-            <span className="mx-2 text-[var(--text-tertiary)]">·</span>
-            <span title={task.target || ""}>{task.target || "未填写目标"}</span>
+            {isDefaultTask && (
+              <>
+                <span className="mx-2 text-[var(--text-tertiary)]">·</span>
+                <span>没单独指定线路的节点都走这条</span>
+              </>
+            )}
           </div>
           <p className="mt-2 text-[12px] text-[var(--text-tertiary)]" title={assignedSummary}>
             {assignedSummary}
@@ -793,14 +799,8 @@ export function ThemeManage() {
   const filteredTasks = useMemo(() => {
     const keyword = taskSearch.trim().toLowerCase();
     if (!keyword) return sortedTasks;
-    return sortedTasks.filter((task) => {
-      return (
-        task.name.toLowerCase().includes(keyword) ||
-        String(task.id).includes(keyword) ||
-        task.type.toLowerCase().includes(keyword) ||
-        task.target.toLowerCase().includes(keyword)
-      );
-    });
+    // 探测方式/目标是主题拼出来的固定值（后端不下发），拿它们当搜索维度只会误导。
+    return sortedTasks.filter((task) => task.name.toLowerCase().includes(keyword));
   }, [sortedTasks, taskSearch]);
 
   const visibleClients = useMemo(
@@ -1760,10 +1760,10 @@ export function ThemeManage() {
         description={
           <>
             CF-Server-Monitor 的探测点固定为电信 / 联通 / 移动 / BD 四条线路，每台节点都有。
-            单线路模式下可为每个节点单独指定显示哪条线路，未指定的节点默认显示电信；
-            开启三网模式后，大卡片和小卡片统一展示指定的三条线路，迷你卡片与列表仍按各自的单线路显示。
+            默认开启三网模式：大卡片和小卡片统一展示指定的三条线路，迷你卡片与列表仍按各自的单线路显示。
+            关掉三网模式后走单线路模式，可为每个节点单独指定显示哪条线路，未指定的节点显示电信。
             {" "}
-            四条线路的探测目标在后台的服务器编辑里配置。首页的延迟柱状图取自 /api/servers
+            四条线路的探测目标与探测方式都在后台的服务器编辑里配置，主题读不到。首页的延迟柱状图取自 /api/servers
             下发的一小时探测窗口（不查历史接口，对后端零额外开销）；后端版本较旧、没有该字段时，
             会退回按实时推送逐格累积，那种情况下需要开着页面才会慢慢填满。
           </>
@@ -1792,8 +1792,8 @@ export function ThemeManage() {
                   开启三网模式
                 </span>
                 <span className="mt-1 block text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-                  默认关闭。开启后大卡片和小卡片统一显示下面三项 Ping
-                  任务；迷你卡片与列表继续使用原有单线路绑定。
+                  默认开启（电信 / 联通 / 移动）。开启后大卡片和小卡片统一显示下面三条线路；
+                  迷你卡片与列表继续按各自的单线路显示。关掉就回到单线路模式。
                 </span>
               </span>
               <input
@@ -1880,8 +1880,8 @@ export function ThemeManage() {
               <input
                 value={taskSearch}
                 onChange={(event) => setTaskSearch(event.target.value)}
-                placeholder="搜索 Ping 任务名称 / ID / 类型 / 目标"
-                aria-label="搜索 Ping 任务"
+                placeholder="搜索线路名称"
+                aria-label="搜索线路"
                 className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[var(--text-tertiary)]"
               />
             </label>
