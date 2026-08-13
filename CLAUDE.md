@@ -48,8 +48,11 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-v1.2.1 已发布并在主题商店上架（`dist` = 产物分支）。下一步没有排期的功能，
+v1.2.2 已发布并在主题商店上架（`dist` = 产物分支）。下一步没有排期的功能，
 以线上反馈的修复为主。
+
+首页延迟默认走三网模式。开关默认值和 `homepageMultiPingTaskIds` 的默认值（电信/联通/移动）
+必须一起给：任务 id 不足三条时首页会静默退回单线路，只翻开关等于没开。
 
 设置页的「复制配置 JSON」导出的是**归一化白名单 + 配色**两部分：白名单见
 `normalizeThemeSettings()`，取色器的 `metricColors` / `darkDepth` 不在其中，由
