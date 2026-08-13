@@ -15,7 +15,8 @@ import { useNodeMeta, useNodeStoreStatus } from "@/hooks/useNode";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { ANONYMOUS_MAX_HISTORY_HOURS } from "@/services/api";
 
-const DEFAULT_PING_HOURS = 6;
+// 1 小时：详情页每打开一次就是一趟 /api/history/all 全量行，默认档位越短后端读的行越少。
+const DEFAULT_PING_HOURS = 1;
 /** `/api/history/all` 的 hours 上限。 */
 const MAX_HISTORY_HOURS = 168;
 type TimeRangeOption = ReturnType<typeof buildLoadTimeRangeOptions>[number];

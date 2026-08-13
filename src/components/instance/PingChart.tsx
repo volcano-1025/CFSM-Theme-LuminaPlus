@@ -274,9 +274,9 @@ export function PingChart({
     return historyCoverageLabel(coverageMeta, times[0], times[times.length - 1]);
   }, [chart, coverageMeta]);
 
+  // 纵轴恒定从 0 起：截取中间一段会把 210ms 和 240ms 画成天差地别，看不出真实量级。
   const yRange = useMemo<[number | null, number | null]>(() => {
     if (!chart) return [null, null];
-    let min = Number.POSITIVE_INFINITY;
     let max = Number.NEGATIVE_INFINITY;
     for (let index = 0; index < tasks.length; index += 1) {
       if (!visibleTaskIds.has(tasks[index].id)) continue;
@@ -284,18 +284,12 @@ export function PingChart({
       if (!series) continue;
       for (const value of series) {
         if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-          if (value < min) min = value;
           if (value > max) max = value;
         }
       }
     }
-    if (min === Number.POSITIVE_INFINITY) return [0, 100];
-    if (min === max) {
-      const pad = Math.max(5, min * 0.1);
-      return [Math.max(0, min - pad), max + pad];
-    }
-    const pad = Math.max(5, (max - min) * 0.12);
-    return [Math.max(0, min - pad), max + pad];
+    if (max === Number.NEGATIVE_INFINITY || max <= 0) return [0, 100];
+    return [0, max + Math.max(5, max * 0.12)];
   }, [chart, tasks, visibleTaskIds]);
 
   const baseOptions = useMemo<Omit<uPlot.Options, "width" | "height"> | null>(() => {
@@ -350,7 +344,8 @@ export function PingChart({
           stroke: text,
           grid: { stroke: grid, width: 1 },
           ticks: { stroke: grid },
-          size: 54,
+          // 64 而非 54：延迟冲到四位数时 "1400 ms" 放不下，uPlot 会从左边把「1」裁掉。
+          size: 64,
           values: (_self, splits) => splits.map((value) => (value === 0 ? "" : `${Math.round(value)} ms`)),
         },
       ],
