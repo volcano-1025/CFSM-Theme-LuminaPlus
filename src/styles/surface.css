@@ -1554,7 +1554,7 @@ body::after {
   flex: none;
   box-sizing: border-box;
   padding-right: 8px;
-  font-size: 11px;
+  font-size: 10px;
   /* 行高压到 1：默认 1.5 的行盒比 6px 的色带高得多，行距看着全是文字撑出来的 */
   line-height: 1;
   color: var(--text-secondary);
