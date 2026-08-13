@@ -46,20 +46,22 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 未经用户确认不要推 `main`。Workers 对分支地址缓存约 1 小时，验收看到旧版就用
 `.../tree/<40 位 SHA>` 绕开；线上跑哪一版看页面源码的 `<meta name="theme-version">`。
 
+## 容易踩的坑
+
+- **Ping 丢包色带**（`PingLossStrip`）靠 `PingChart` 里的 `Y_AXIS_SIZE` /
+  `CHART_PADDING_LEFT` / `CHART_PADDING_RIGHT` 三个常量与折线逐像素对齐，宽度取 uPlot 的
+  canvas 宽（图表宽度会被量化到 8px 网格，量容器会差几像素）。改轴宽或内边距要两边一起改。
+  丢包按样本数加权平均，不能套折线那套保峰降采样。
+- **三网模式的两个默认值必须一起给**：开关默认开的同时，`homepageMultiPingTaskIds`
+  也要有默认值（电信/联通/移动）。任务 id 不足三条时首页会静默退回单线路，只翻开关等于没开。
+- **「复制配置 JSON」导出的是归一化白名单 + 配色两部分**：白名单见 `normalizeThemeSettings()`，
+  取色器的 `metricColors` / `darkDepth` 不在其中，由 `pickPaletteSettings()` 单独并进快照。
+  配色只导用户改过的项，没改过的沿用主题默认 token（这样主题以后调默认配色，站点会跟着走）
+  —— 加新的非白名单设置时记得一并考虑导出。
+- **本机设置永远压过后台预设**：合并口径是 `{...后台 theme_options, ...localStorage}`，
+  访客存过设置后，站长再改后台 JSON 也传不过去，只能靠设置页的「同步后台配置」清掉本地那份。
+
 ## 当前状态
 
 v1.2.3 已发布并在主题商店上架（`dist` = 产物分支）。下一步没有排期的功能，
 以线上反馈的修复为主。
-
-Ping 图的丢包色带（`PingLossStrip`）靠 `PingChart` 里的 `Y_AXIS_SIZE` /
-`CHART_PADDING_LEFT` / `CHART_PADDING_RIGHT` 三个常量与折线逐像素对齐，宽度取
-uPlot 的 canvas 宽（图表宽度会被量化到 8px 网格，量容器会差几像素）。改轴宽或内边距
-要两边一起改。丢包按样本数加权平均，不能套折线那套保峰降采样。
-
-首页延迟默认走三网模式。开关默认值和 `homepageMultiPingTaskIds` 的默认值（电信/联通/移动）
-必须一起给：任务 id 不足三条时首页会静默退回单线路，只翻开关等于没开。
-
-设置页的「复制配置 JSON」导出的是**归一化白名单 + 配色**两部分：白名单见
-`normalizeThemeSettings()`，取色器的 `metricColors` / `darkDepth` 不在其中，由
-`pickPaletteSettings()` 单独并进快照。配色只导用户改过的项，没改过的沿用主题默认
-token（这样主题以后调默认配色，站点会跟着走）—— 加新的非白名单设置时记得一并考虑导出。
