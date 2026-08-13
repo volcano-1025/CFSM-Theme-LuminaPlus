@@ -48,8 +48,13 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-v1.2.2 已发布并在主题商店上架（`dist` = 产物分支）。下一步没有排期的功能，
+v1.2.3 已发布并在主题商店上架（`dist` = 产物分支）。下一步没有排期的功能，
 以线上反馈的修复为主。
+
+Ping 图的丢包色带（`PingLossStrip`）靠 `PingChart` 里的 `Y_AXIS_SIZE` /
+`CHART_PADDING_LEFT` / `CHART_PADDING_RIGHT` 三个常量与折线逐像素对齐，宽度取
+uPlot 的 canvas 宽（图表宽度会被量化到 8px 网格，量容器会差几像素）。改轴宽或内边距
+要两边一起改。丢包按样本数加权平均，不能套折线那套保峰降采样。
 
 首页延迟默认走三网模式。开关默认值和 `homepageMultiPingTaskIds` 的默认值（电信/联通/移动）
 必须一起给：任务 id 不足三条时首页会静默退回单线路，只翻开关等于没开。
