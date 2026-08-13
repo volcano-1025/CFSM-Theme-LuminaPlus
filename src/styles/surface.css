@@ -1528,6 +1528,46 @@ body::after {
   gap: 8px;
 }
 
+/* 丢包色带：左槽位宽度由 JS 传入，与主图 Y 轴刻度同宽，保证横轴逐像素对齐 */
+.ping-loss-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.ping-loss-caption {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  box-sizing: border-box;
+  padding-bottom: 2px;
+}
+
+.ping-loss-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.ping-loss-label {
+  flex: none;
+  box-sizing: border-box;
+  padding-right: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ping-loss-row canvas {
+  display: block;
+  flex: none;
+  border-radius: 5px;
+}
+
 .instance-ping-task {
   display: inline-flex;
   align-items: center;

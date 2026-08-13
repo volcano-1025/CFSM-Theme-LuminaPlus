@@ -14,6 +14,7 @@ import {
   type ChartTooltipState,
 } from "./chartShared";
 import { ChartTooltip, SwitchToggle } from "./ChartParts";
+import { PingLossStrip, type PingLossRow } from "./PingLossStrip";
 import {
   cutPeakValues,
   detectTypicalIntervalSeconds,
@@ -23,7 +24,13 @@ import {
 } from "./chartData";
 import { latencyHeatColor, lossHeatColor } from "@/utils/metricTone";
 import { historyChartRangeSeconds, historyCoverageLabel } from "@/utils/historyRange";
-import { resolvePingChartInterval, resolvePingSampleCounts } from "@/utils/pingMetrics";
+import {
+  bucketPingLoss,
+  formatPingTooltipValue,
+  resolvePingChartInterval,
+  resolvePingSampleCounts,
+  type PingLossSample,
+} from "@/utils/pingMetrics";
 import { usePreferences } from "@/hooks/usePreferences";
 import type { PingRecord, PingTaskStats } from "@/types/cfsm";
 import type { TimedMetricPoint } from "./chartData";
@@ -96,6 +103,10 @@ export function summarizePingRecords(records: PingRecord[]) {
 
 const EMPTY_PING_STATS: PingTaskStats[] = [];
 const MAX_RENDER_POINTS = 160;
+// 纵轴槽位与左右内边距：丢包色带靠这三个常量与主图对齐，改一处必须改另一处。
+const Y_AXIS_SIZE = 64;
+const CHART_PADDING_LEFT = 2;
+const CHART_PADDING_RIGHT = 14;
 // 1 即关闭平滑(smoothByCount 对 <=1 原样返回);保留常量便于调参,非削峰模式当前不平滑。
 const SMOOTH_WINDOW_POINTS = 1;
 const SMOOTH_WINDOW_POINTS_PEAK = 13;
@@ -123,7 +134,10 @@ export function PingChart({
   const [hiddenTasks, setHiddenTasks] = useState<Set<number>>(new Set());
   const [connectNulls, setConnectNulls] = useState(false);
   const [cutPeak, setCutPeak] = useState(false);
+  const [showLoss, setShowLoss] = useState(true);
   const chartRef = useRef<uPlot.AlignedData>([[]]);
+  // tooltip 的 buildRows 只拿得到点位下标，丢包值走 ref 与图表数据同步。
+  const lossRef = useRef<Array<Array<number | null>>>([]);
   const [tooltip, setTooltip] = useState<ChartTooltipState>({
     show: false,
     left: 0,
@@ -192,9 +206,11 @@ export function PingChart({
     [data],
   );
 
-  const chart = useMemo(() => {
+  const chartBundle = useMemo(() => {
     if (!data?.records.length || !tasks.length) return null;
     const pointMap = new Map<number, TimedMetricPoint>();
+    // 丢包与延迟走各自的聚合口径：延迟保峰、丢包按样本数加权平均，所以在这里单独攒原始样本。
+    const lossSamples = new Map<string, PingLossSample[]>(taskKeys.map((key) => [key, []]));
     const taskIntervals = tasks
       .map((task) => task.interval)
       .filter((value): value is number => typeof value === "number" && value > 0);
@@ -212,13 +228,17 @@ export function PingChart({
     // 升序游标把邻近任务采样合并到同一时间锚点，保持 O(n)。
     let lastAnchor = Number.NEGATIVE_INFINITY;
     for (const { record, time } of sortedRecords) {
-      if (!taskKeySet.has(String(record.task_id))) continue;
+      const taskKey = String(record.task_id);
+      if (!taskKeySet.has(taskKey)) continue;
       const anchor = time - lastAnchor <= tolerance ? lastAnchor : time;
       if (anchor === time) lastAnchor = time;
       const current = pointMap.get(anchor) ?? { time: anchor };
       // 0 是亚毫秒成功，负值才表示丢包。
-      current[String(record.task_id)] = record.value >= 0 ? record.value : null;
+      current[taskKey] = record.value >= 0 ? record.value : null;
       pointMap.set(anchor, current);
+      // 整点超时(value < 0)与部分丢包(loss 百分比)都由 resolvePingSampleCounts 归一。
+      const counts = resolvePingSampleCounts(record);
+      lossSamples.get(taskKey)?.push({ time: anchor, lost: counts.lost, total: counts.total });
     }
 
     let chartPoints = [...pointMap.values()].sort((a, b) => a.time - b.time);
@@ -247,12 +267,34 @@ export function PingChart({
       cutPeak ? SMOOTH_WINDOW_POINTS_PEAK : SMOOTH_WINDOW_POINTS,
     );
 
-    return [reduced.times, ...smoothed] as uPlot.AlignedData;
+    return {
+      data: [reduced.times, ...smoothed] as uPlot.AlignedData,
+      // 归到与折线同一套时间格上，色带才能和曲线逐像素对齐。削峰/平滑只作用于延迟，
+      // 丢包始终是真实值。
+      loss: taskKeys.map((key) =>
+        bucketPingLoss(lossSamples.get(key) ?? [], reduced.times),
+      ),
+    };
   }, [cutPeak, data, sortedRecords, taskKeySet, taskKeys, tasks]);
 
+  const chart = chartBundle?.data ?? null;
+
+  // 只画当前可见的线路，和图例的显示/隐藏联动。
+  const lossRows = useMemo<PingLossRow[]>(() => {
+    if (!chartBundle) return [];
+    return visibleTasks.map((task) => ({
+      id: task.id,
+      label: taskLabels.get(task.id) ?? `任务 #${task.id}`,
+      loss: chartBundle.loss[taskIndexById.get(task.id) ?? 0] ?? [],
+    }));
+  }, [chartBundle, taskIndexById, taskLabels, visibleTasks]);
+
   useEffect(() => {
-    if (chart) chartRef.current = chart;
-  }, [chart]);
+    if (chartBundle) {
+      chartRef.current = chartBundle.data;
+      lossRef.current = chartBundle.loss;
+    }
+  }, [chartBundle]);
 
   const requestedXRange = useMemo(() => historyChartRangeSeconds(data), [data]);
   const coverageMeta = useMemo(() => {
@@ -305,9 +347,11 @@ export function PingChart({
           .map((task) => {
             const taskIndex = taskIndexById.get(task.id) ?? 0;
             const raw = chartRef.current[taskIndex + 1]?.[idx] as number | null | undefined;
+            const loss = lossRef.current[taskIndex]?.[idx] ?? null;
             return {
               label: taskLabels.get(task.id) ?? `任务 #${task.id}`,
               raw: typeof raw === "number" && Number.isFinite(raw) ? raw : null,
+              loss,
               color: taskColors.get(task.id) ?? colorForSeries(taskIndex, tasks.length),
             };
           })
@@ -316,14 +360,14 @@ export function PingChart({
             if (b.raw == null) return -1;
             return b.raw - a.raw;
           })
-          .map(({ label, raw, color }) => ({
+          .map(({ label, raw, loss, color }) => ({
             label,
-            value: raw == null ? "—" : `${raw.toFixed(1)} ms`,
+            value: formatPingTooltipValue(raw, loss),
             color,
           })),
     });
     return {
-      padding: [10, 14, 12, 2],
+      padding: [10, CHART_PADDING_RIGHT, 12, CHART_PADDING_LEFT],
       cursor: { drag: { x: true, y: false } },
       legend: { show: false },
       scales: {
@@ -345,7 +389,7 @@ export function PingChart({
           grid: { stroke: grid, width: 1 },
           ticks: { stroke: grid },
           // 64 而非 54：延迟冲到四位数时 "1400 ms" 放不下，uPlot 会从左边把「1」裁掉。
-          size: 64,
+          size: Y_AXIS_SIZE,
           values: (_self, splits) => splits.map((value) => (value === 0 ? "" : `${Math.round(value)} ms`)),
         },
       ],
@@ -493,6 +537,12 @@ export function PingChart({
           title="对尖峰值做轻度平滑，仅影响图线显示"
         />
         <SwitchToggle
+          label="丢包色带"
+          active={showLoss}
+          onToggle={() => setShowLoss((value) => !value)}
+          title="在图表下方按线路显示丢包率色带：越红丢得越多，空缺表示该时段没有采样。不受削峰平滑影响。"
+        />
+        <SwitchToggle
           label="断点连线"
           active={connectNulls}
           onToggle={() => setConnectNulls((value) => !value)}
@@ -571,6 +621,18 @@ export function PingChart({
           <div className="instance-empty">当前已隐藏全部线路，点击上方按钮可恢复显示</div>
         )}
       </div>
+
+      {showLoss && chart && lossRows.length > 0 && (
+        <PingLossStrip
+          times={chart[0] as number[]}
+          xRange={requestedXRange}
+          rows={lossRows}
+          chartWidth={w}
+          gutter={Y_AXIS_SIZE + CHART_PADDING_LEFT}
+          rightPad={CHART_PADDING_RIGHT}
+          isDark={isDark}
+        />
+      )}
     </InstancePanel>
   );
 }
