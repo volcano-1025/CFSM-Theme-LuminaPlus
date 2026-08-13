@@ -1519,17 +1519,28 @@ body::after {
 
 /* 丢包色带：左槽位宽度由 JS 传入，与主图 Y 轴刻度同宽，保证横轴逐像素对齐 */
 .ping-loss-strip {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin: 12px 0 2px;
+  gap: 1px;
+  margin: 10px 0 0;
 }
 
-.ping-loss-caption {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  box-sizing: border-box;
-  padding-bottom: 3px;
+/* 与主图 uPlot 游标同款的虚线，纵向贯穿整条色带。
+   向下多伸 10px 跨过 uPlot 的顶部内边距（options.padding 的第一个值），
+   与主图那根游标接成一条完整的线 */
+.ping-loss-cursor {
+  position: absolute;
+  top: 0;
+  bottom: -10px;
+  width: 0;
+  border-right: 1px dashed #607d8b;
+  pointer-events: none;
+}
+
+/* 色带紧贴图表：中间留白会把游标虚线切成两截 */
+.ping-loss-strip + .instance-uplot-wrap.is-large {
+  margin-top: 0;
 }
 
 .ping-loss-row {
@@ -1544,6 +1555,8 @@ body::after {
   box-sizing: border-box;
   padding-right: 8px;
   font-size: 11px;
+  /* 行高压到 1：默认 1.5 的行盒比 6px 的色带高得多，行距看着全是文字撑出来的 */
+  line-height: 1;
   color: var(--text-secondary);
   text-align: right;
   white-space: nowrap;

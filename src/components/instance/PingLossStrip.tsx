@@ -29,6 +29,7 @@ export function PingLossStrip({
   gutter,
   rightPad,
   isDark,
+  cursorLeft,
 }: {
   times: number[];
   xRange: [number, number] | null;
@@ -37,15 +38,18 @@ export function PingLossStrip({
   gutter: number;
   rightPad: number;
   isDark: boolean;
+  /** 主图游标距绘图区左边的像素；null 表示鼠标不在图上。 */
+  cursorLeft: number | null;
 }) {
   const trackWidth = Math.max(0, chartWidth - gutter - rightPad);
   if (rows.length === 0 || times.length === 0 || trackWidth <= 0) return null;
 
   return (
     <div className="ping-loss-strip" style={{ width: chartWidth }}>
-      <div className="ping-loss-caption" style={{ paddingLeft: gutter }}>
-        丢包（越红丢得越多，空缺处没有采样）
-      </div>
+      {/* 游标竖线：色带与绘图区左边界、宽度都一致，所以直接用主图的 cursor.left */}
+      {cursorLeft != null && cursorLeft <= trackWidth && (
+        <div className="ping-loss-cursor" style={{ left: gutter + cursorLeft }} aria-hidden />
+      )}
       {rows.map((row) => (
         <div className="ping-loss-row" key={row.id}>
           <span className="ping-loss-label" style={{ width: gutter }}>

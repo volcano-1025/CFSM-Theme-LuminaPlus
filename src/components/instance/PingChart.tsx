@@ -135,6 +135,7 @@ export function PingChart({
   const [connectNulls, setConnectNulls] = useState(false);
   const [cutPeak, setCutPeak] = useState(false);
   const [showLoss, setShowLoss] = useState(true);
+  const [cursorLeft, setCursorLeft] = useState<number | null>(null);
   const chartRef = useRef<uPlot.AlignedData>([[]]);
   // tooltip 的 buildRows 只拿得到点位下标，丢包值走 ref 与图表数据同步。
   const lossRef = useRef<Array<Array<number | null>>>([]);
@@ -413,7 +414,16 @@ export function PingChart({
           tooltipHooks.onInit,
         ],
         destroy: [tooltipHooks.onDestroy],
-        setCursor: [tooltipHooks.onSetCursor],
+        setCursor: [
+          tooltipHooks.onSetCursor,
+          // 把游标位置同步给上方的丢包色带，让那根竖线一路贯穿到色带里。
+          // 相同像素值时 React 会自行跳过重渲，不必额外节流。
+          (u) => {
+            const left = u.cursor.left;
+            const inside = left != null && left >= 0 && u.cursor.idx != null;
+            setCursorLeft(inside ? Math.round(left) : null);
+          },
+        ],
       },
     };
   }, [chart, connectNulls, hiddenTasks, hours, isDark, requestedXRange, taskColors, taskIndexById, taskLabels, tasks, visibleTasks, yRange]);
@@ -616,6 +626,7 @@ export function PingChart({
           gutter={Y_AXIS_SIZE + CHART_PADDING_LEFT}
           rightPad={CHART_PADDING_RIGHT}
           isDark={isDark}
+          cursorLeft={cursorLeft}
         />
       )}
 
