@@ -17,6 +17,8 @@ function record(time: string, overrides: Partial<LoadRecord> = {}): LoadRecord {
     temp: 0,
     disk: 0,
     disk_total: 0,
+    disk_read: null,
+    disk_write: null,
     net_in: 0,
     net_out: 0,
     net_total_up: 0,

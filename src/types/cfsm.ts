@@ -427,6 +427,9 @@ export interface LoadRecord {
   temp: number;
   disk: number;
   disk_total: number;
+  /** 磁盘 IO 速率（字节/秒）。旧探针/旧后端不下发时为 null —— 0 表示真的没有读写。 */
+  disk_read: number | null;
+  disk_write: number | null;
   net_in: number;
   net_out: number;
   /** CF-Server-Monitor 历史不保存累计流量，恒为 0。 */

@@ -517,6 +517,10 @@ export function historyRowToLoadRecord(row: HistoryRow, client: string): LoadRec
     temp: 0,
     disk: row.disk_used * MIB,
     disk_total: row.disk_total * MIB,
+    // 后端两种下发形态都见过：嵌套的 disk 对象与扁平的 disk_read_bps 字段。
+    // 两者都没有说明探针没采集，保持 null 让图表退回显示已用空间。
+    disk_read: toNullableNumber(row.disk?.read_bps ?? row.disk_read_bps),
+    disk_write: toNullableNumber(row.disk?.write_bps ?? row.disk_write_bps),
     net_in: row.net_in_speed,
     net_out: row.net_out_speed,
     net_total_up: 0,

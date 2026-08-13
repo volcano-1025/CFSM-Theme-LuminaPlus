@@ -282,6 +282,31 @@ describe("history conversion", () => {
     expect(record.time).toBe(NOW);
     // CF-Server-Monitor 历史不保存累计流量。
     expect(record.net_total_up).toBe(0);
+    // 这一行没有磁盘 IO：保持 null，磁盘图才知道要退回已用空间。
+    expect(record.disk_read).toBeNull();
+    expect(record.disk_write).toBeNull();
+  });
+
+  it("reads disk IO from either the nested object or the flat fields", () => {
+    const nested = historyRowToLoadRecord(
+      HistoryRowSchema.parse({
+        timestamp: NOW,
+        disk: { read_bps: 4_000_000, write_bps: 1_500_000 },
+      }),
+      "node-a",
+    );
+    expect([nested.disk_read, nested.disk_write]).toEqual([4_000_000, 1_500_000]);
+
+    const flat = historyRowToLoadRecord(
+      HistoryRowSchema.parse({
+        timestamp: NOW,
+        disk_read_bps: 900_000,
+        disk_write_bps: 0,
+      }),
+      "node-a",
+    );
+    // 写入 0 是「真的没在写」，不能当作缺数据。
+    expect([flat.disk_read, flat.disk_write]).toEqual([900_000, 0]);
   });
 
   it("emits one ping record per measured carrier", () => {
