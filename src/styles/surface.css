@@ -1548,6 +1548,8 @@ body::after {
   align-items: center;
   gap: 0;
   min-width: 0;
+  /* 行高与标签字号解耦：否则调一次字号就把整条色带的疏密也改了 */
+  height: 10px;
 }
 
 .ping-loss-label {
