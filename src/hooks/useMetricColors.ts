@@ -103,6 +103,23 @@ function readPaletteDraft(settings: Record<string, unknown> | undefined): Palett
   };
 }
 
+/**
+ * 导出用：从一份主题设置里挑出配色相关的键。
+ *
+ * 设置页的「复制配置 JSON」走 normalizeThemeSettings，那是个白名单，认不得
+ * metricColors / darkDepth，直接导出会把取色器里调的卡片配色丢掉。
+ * 与默认值相同就不写进快照，避免站点预设里堆一堆无意义的键。
+ */
+export function pickPaletteSettings(
+  settings: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const { colors, darkDepth } = readPaletteDraft(settings);
+  const out: Record<string, unknown> = {};
+  if (Object.keys(colors).length > 0) out[SETTINGS_KEY] = colors;
+  if (darkDepth !== DEFAULT_DARK_DEPTH) out[DARK_DEPTH_SETTINGS_KEY] = darkDepth;
+  return out;
+}
+
 // ---- 已应用配色：写 CSS 变量 + 维护 version 让 canvas 卡片即时重绘 ----
 let version = 0;
 let appliedSig = "__init__";

@@ -30,6 +30,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { Flag } from "@/components/ui/Flag";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useHourlyClock } from "@/hooks/useClock";
+import { pickPaletteSettings } from "@/hooks/useMetricColors";
 import { useLocalThemeSettings } from "@/hooks/useThemeSettings";
 import { getNodes } from "@/services/api";
 import { carrierPingTasks } from "@/services/cfsm/mappers";
@@ -1031,18 +1032,20 @@ export function ThemeManage() {
    * 第三方主题不能写后端设置，多设备同步只能走这条路：复制 → 粘进后台 → 所有设备（以及
    * 所有访客）都以它为默认值。导出的是完整快照，包含配色等本页之外的设置。
    */
-  const siteDefaultsJson = useMemo(
-    () =>
-      JSON.stringify(
-        normalizeThemeSettings({
-          ...getLocalThemeSettings(),
-          ...draftThemeSettings,
-        } as ThemeSettings & Record<string, unknown>),
-        null,
-        2,
-      ),
-    [draftThemeSettings],
-  );
+  const siteDefaultsJson = useMemo(() => {
+    // 配色的口径和全站一致：站点预设打底，本机覆盖在上。normalizeThemeSettings 是白名单，
+    // 认不得 metricColors / darkDepth，所以取色器调的配色要单独并回快照。
+    const merged = {
+      ...(config?.theme_settings ?? {}),
+      ...localThemeSettings,
+      ...draftThemeSettings,
+    } as ThemeSettings & Record<string, unknown>;
+    return JSON.stringify(
+      { ...normalizeThemeSettings(merged), ...pickPaletteSettings(merged) },
+      null,
+      2,
+    );
+  }, [config?.theme_settings, localThemeSettings, draftThemeSettings]);
 
   const handleCopySiteDefaults = async () => {
     setError(null);
