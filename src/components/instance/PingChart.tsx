@@ -531,16 +531,16 @@ export function PingChart({
     <InstancePanel title="Ping 图表" description={coverageLabel ?? undefined}>
       <div className="instance-ping-toolbar">
         <SwitchToggle
+          label="丢包色带"
+          active={showLoss}
+          onToggle={() => setShowLoss((value) => !value)}
+          title="在图表上方按线路显示丢包率色带：越红丢得越多，空缺表示该时段没有采样。不受削峰平滑影响。"
+        />
+        <SwitchToggle
           label="削峰平滑"
           active={cutPeak}
           onToggle={() => setCutPeak((value) => !value)}
           title="对尖峰值做轻度平滑，仅影响图线显示"
-        />
-        <SwitchToggle
-          label="丢包色带"
-          active={showLoss}
-          onToggle={() => setShowLoss((value) => !value)}
-          title="在图表下方按线路显示丢包率色带：越红丢得越多，空缺表示该时段没有采样。不受削峰平滑影响。"
         />
         <SwitchToggle
           label="断点连线"
@@ -607,6 +607,18 @@ export function PingChart({
         })}
       </div>
 
+      {showLoss && chart && lossRows.length > 0 && (
+        <PingLossStrip
+          times={chart[0] as number[]}
+          xRange={requestedXRange}
+          rows={lossRows}
+          chartWidth={w}
+          gutter={Y_AXIS_SIZE + CHART_PADDING_LEFT}
+          rightPad={CHART_PADDING_RIGHT}
+          isDark={isDark}
+        />
+      )}
+
       <div ref={chartSizeRef} className="instance-uplot-wrap is-large">
         {chart && options && visibleTasks.length > 0 ? (
           <>
@@ -621,18 +633,6 @@ export function PingChart({
           <div className="instance-empty">当前已隐藏全部线路，点击上方按钮可恢复显示</div>
         )}
       </div>
-
-      {showLoss && chart && lossRows.length > 0 && (
-        <PingLossStrip
-          times={chart[0] as number[]}
-          xRange={requestedXRange}
-          rows={lossRows}
-          chartWidth={w}
-          gutter={Y_AXIS_SIZE + CHART_PADDING_LEFT}
-          rightPad={CHART_PADDING_RIGHT}
-          isDark={isDark}
-        />
-      )}
     </InstancePanel>
   );
 }

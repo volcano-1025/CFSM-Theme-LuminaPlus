@@ -4,7 +4,7 @@ import { lossHeatColor } from "@/utils/metricTone";
 /**
  * Ping 图下方的丢包色带。
  *
- * 每条线路一行，横轴与主图严格对齐：整条色带的宽度直接取主图 canvas 的宽度（而不是
+ * 放在折线图上方，每条线路一行，横轴与主图严格对齐：整条色带的宽度直接取主图 canvas 的宽度（而不是
  * 自己量容器 —— 图表宽度会被量化到 8px 网格，量容器会差几像素），左边留出与 Y 轴刻度
  * 同宽的槽位放线路名，右边留出与主图相同的内边距，时间→像素用主图同一个 x 区间换算。
  *
@@ -12,7 +12,7 @@ import { lossHeatColor } from "@/utils/metricTone";
  * 没有采样的时段不画，露出底色轨道 —— 掉线和「丢包 0%」必须看得出区别。
  */
 
-const ROW_HEIGHT = 10;
+const ROW_HEIGHT = 6;
 
 export interface PingLossRow {
   id: number;

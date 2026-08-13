@@ -1298,13 +1298,6 @@ body::after {
   transition: transform 160ms ease, background 160ms ease;
 }
 
-.instance-switch-state {
-  min-width: 24px;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 650;
-}
-
 .instance-segmented button[data-active="true"],
 .instance-toggle-button[data-active="true"],
 .instance-toggle-button:hover {
@@ -1319,10 +1312,6 @@ body::after {
 .instance-toggle-button[data-active="true"] .instance-switch-thumb {
   transform: translateX(14px);
   background: color-mix(in srgb, white 84%, var(--progress-cpu) 16%);
-}
-
-.instance-toggle-button[data-active="true"] .instance-switch-state {
-  color: var(--text-primary);
 }
 
 .instance-chart-meta {
@@ -1532,15 +1521,15 @@ body::after {
 .ping-loss-strip {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 6px;
+  gap: 2px;
+  margin: 12px 0 2px;
 }
 
 .ping-loss-caption {
   font-size: 11px;
   color: var(--text-tertiary);
   box-sizing: border-box;
-  padding-bottom: 2px;
+  padding-bottom: 3px;
 }
 
 .ping-loss-row {
@@ -1565,7 +1554,7 @@ body::after {
 .ping-loss-row canvas {
   display: block;
   flex: none;
-  border-radius: 5px;
+  border-radius: 3px;
 }
 
 .instance-ping-task {

@@ -45,10 +45,10 @@ export function SwitchToggle({
       title={title}
     >
       <span className="instance-switch-copy">{label}</span>
+      {/* 开关状态由拨钮位置和 aria-pressed 表达，不再重复一遍「开启/关闭」文字 */}
       <span className="instance-switch-track" aria-hidden>
         <span className="instance-switch-thumb" />
       </span>
-      <span className="instance-switch-state">{active ? "开启" : "关闭"}</span>
     </button>
   );
 }
