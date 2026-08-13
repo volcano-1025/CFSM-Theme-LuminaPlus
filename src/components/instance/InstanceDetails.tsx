@@ -75,9 +75,11 @@ export function InstanceDetails({
             value={`${meta.cpu_name || "—"}${meta.cpu_cores > 0 ? ` (x${meta.cpu_cores})` : ""}`}
           />
           <InfoRow label="架构" value={meta.arch || "—"} />
-          <InfoRow label="虚拟化" value={meta.virtualization || "—"} />
           <InfoRow label="显卡" value={meta.gpu_name || "—"} />
           <InfoRow label="操作系统" value={meta.os || "—"} />
+          {/* 原来这里是「虚拟化」，但 CF-Server-Monitor 不上报该字段(见 toNodeInfo)，
+              永远显示「—」。换成后端确实下发、之前一直没用上的内核版本。 */}
+          <InfoRow label="内核版本" value={meta.kernel_version || "—"} />
         </div>
 
         <div className="instance-info-group">
