@@ -48,7 +48,7 @@ const MEMORY_COLORS = [CHART_PALETTE.memory, CHART_PALETTE.warning];
 const DISK_KEYS = ["disk"];
 const DISK_COLORS = [CHART_PALETTE.disk];
 const DISK_IO_KEYS = ["diskRead", "diskWrite"];
-const DISK_IO_COLORS = [CHART_PALETTE.disk, CHART_PALETTE.memory];
+const DISK_IO_COLORS = [CHART_PALETTE.cpu, CHART_PALETTE.warning];
 const NETWORK_KEYS = ["netIn", "netOut"];
 const NETWORK_COLORS = [CHART_PALETTE.success, CHART_PALETTE.cpu];
 const CONNECTION_KEYS = ["connections", "udp"];
@@ -202,6 +202,7 @@ function buildBaseOptions({
   axisKind,
   axisSize = 52,
   xRange,
+  fillAllSeries,
 }: {
   title: string;
   keys: string[];
@@ -212,6 +213,7 @@ function buildBaseOptions({
   axisKind: "percent" | "network" | "byteRate" | "count";
   axisSize?: number;
   xRange?: [number, number] | null;
+  fillAllSeries?: boolean;
 }): Omit<uPlot.Options, "width" | "height"> {
   const isDark = resolvedAppearance === "dark";
   const { grid, text } = getAxisColors(isDark);
@@ -255,7 +257,9 @@ function buildBaseOptions({
       ...keys.map((key, index) => ({
         label: key,
         stroke: colors[index] ?? colors[0],
-        fill: index === 0 ? `${colors[index] ?? colors[0]}22` : undefined,
+        // 默认只给第一条线填充；两条线地位对等时(磁盘读/写)全填，否则恰好为 0 的那条
+        // 会独占填充色，看起来像它才是主角。
+        fill: fillAllSeries || index === 0 ? `${colors[index] ?? colors[0]}22` : undefined,
         width: 1.6,
         spanGaps: spanGaps ?? false,
         points: { show: false },
@@ -288,6 +292,8 @@ const ChartCard = memo(function ChartCard({
   axisKind,
   axisSize,
   xRange,
+  fillAllSeries,
+  accent,
 }: {
   icon: ReactNode;
   title: string;
@@ -304,6 +310,9 @@ const ChartCard = memo(function ChartCard({
   axisKind: "percent" | "network" | "byteRate" | "count";
   axisSize?: number;
   xRange?: [number, number] | null;
+  fillAllSeries?: boolean;
+  /** 卡片边框/图标的主色。默认跟随第一条线，指标本身有固定色时用它覆盖。 */
+  accent?: string;
 }) {
   const { w, h, ref: chartSizeRef } = useResponsiveChartSize("grid");
   const dataRef = useRef<uPlot.AlignedData>([[]]);
@@ -330,8 +339,20 @@ const ChartCard = memo(function ChartCard({
         axisKind,
         axisSize,
         xRange,
+        fillAllSeries,
       }),
-    [axisKind, axisSize, colors, keys, rangeHours, resolvedAppearance, spanGaps, title, xRange],
+    [
+      axisKind,
+      axisSize,
+      colors,
+      fillAllSeries,
+      keys,
+      rangeHours,
+      resolvedAppearance,
+      spanGaps,
+      title,
+      xRange,
+    ],
   );
 
   const enhancedOptions = useMemo<Omit<uPlot.Options, "width" | "height">>(() => {
@@ -370,7 +391,7 @@ const ChartCard = memo(function ChartCard({
   return (
     <div
       className="instance-chart-card"
-      style={{ "--chart-accent": colors[0] } as CSSProperties}
+      style={{ "--chart-accent": accent ?? colors[0] } as CSSProperties}
     >
       <header className="instance-chart-card-head">
         <div className="instance-panel-subhead">
@@ -673,6 +694,8 @@ export function LoadChart({
             axisKind="byteRate"
             axisSize={72}
             xRange={requestedXRange}
+            fillAllSeries
+            accent={CHART_PALETTE.disk}
           />
         ) : (
           <ChartCard
