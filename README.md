@@ -7,27 +7,59 @@
 资产与流量统计、实例详情的负载与延迟图表（延迟图带丢包色带）；数据层全部改为
 CF-Server-Monitor 的公开 API。
 
-## 快速开始
+## 怎么用
 
-```bash
-npm install
-npm run dev
+不用自己构建，也不用另外找地方部署 —— 主题跟着你现有的 Workers 后端跑，二选一：
+
+**① 从主题商店切换（最省事）**
+
+后台 `/admin#admin` → 主题商店 → 找到 **LuminaPlus** → 安装并切换。
+
+**② 填自定义主题 URL**
+
+主题商店里没有、或者想装指定版本时，把下面这行地址填进后台的自定义主题 URL：
+
+```
+https://github.com/volcano-1025/CFSM-Theme-LuminaPlus/tree/dist
 ```
 
-本地没有后端时，用 `http://localhost:5173/?mock=1` 打开内置的假数据（4 台节点，含离线与到期状态）。
+`dist` 是构建产物分支（源码在 `main`，别填错）。想锁定某一版就把 `dist` 换成那一版产物提交的
+40 位 SHA，例如 `.../tree/4e32094a8204b669f47c97549fb5ee0c15325710` —— 锁住之后本仓库怎么更新
+都不会影响你。各版本对应的 SHA 见 [CHANGELOG.md](CHANGELOG.md) 和 `dist` 分支的提交记录。
 
-## 部署
+两种方式都与后端同源，不需要额外配置。站点标题、图标、背景图、自定义 head / script
+由后台「外观设置」注入，主题不覆盖它们。主题自身的设置见页面右上角的设置入口，
+存在浏览器本地；要给所有访客统一预设，见下面的「与 Komari 版的差异 → 主题设置存在本地」。
 
-### 一、由 Workers 托管（推荐）
+### 更新是手动的
+
+装上之后不会自动升级。出了新版本要自己回后台更新一次：
+
+- **主题商店装的**：回主题商店重新安装 / 更新一次。
+- **填 URL 装的**：地址填的是 `tree/dist` 的话，Workers 对分支地址有约一小时缓存，
+  过了缓存自然就是新版；等不及就把地址临时换成新版本的 40 位 SHA。地址本来就锁在 SHA 上的，
+  必须手动改成新 SHA，否则永远停在旧版。
+
+线上到底跑的哪一版，看页面源码里的 `<meta name="theme-version" content="LuminaPlus v...">`。
+
+### 搭配 Egern 小组件（可选）
+
+用 Egern 的话，还有个配套的 iOS 主屏小组件
+[cfsm-egern-widget](https://github.com/volcano-1025/cfsm-egern-widget)：
+在 Egern 配置里加一段 scriptings 和 widgets 记录、填上后端地址，就能在手机主屏上看节点状态，
+小 / 中 / 大三种尺寸共用一个脚本。它和本主题互不依赖，装不装都行。
+
+## 自行构建部署（可选）
+
+上面两种方式已经够用，以下适合想自己托管或改代码的人。
+
+### 一、自己发布产物给 Workers 用
 
 1. `npm run build`，产物在 `dist/`（只有 `index.html` 和 `assets/`）。
 2. 把 `index.html` 与 `assets/` 提交到自己的 GitHub 仓库
    （本仓库由 CI 自动发布到 `dist` 分支，见下面的「发布与验收」）。
-3. 在后台 `/admin#admin` → 主题商店里填入该仓库的目录地址，或提交到
+3. 在后台主题商店里填入该仓库的目录地址，或提交到
    [CFSM-Theme-Store](https://github.com/huilang-me/CFSM-Theme-Store)。
-
-这种部署与后端同源，不需要任何额外配置。站点标题、图标、背景图、自定义 head / script
-由后台「外观设置」注入，主题不覆盖它们。
 
 ### 二、纯静态托管（GitHub Pages 等）
 
@@ -162,11 +194,15 @@ WebSocket 断开时自动退回 5 秒轮询 `/api/servers`；多后端部署下�
 ## 开发
 
 ```bash
+npm install
+npm run dev         # http://localhost:5173
 npm run typecheck   # tsc -b
 npm run lint        # eslint
 npm test            # vitest
 npm run build       # 产物只含 index.html + assets/
 ```
+
+手边没有后端时，用 `http://localhost:5173/?mock=1` 打开内置假数据（4 台节点，含离线与到期状态）。
 
 数据层集中在这几个文件，改后端适配基本只碰它们：
 
