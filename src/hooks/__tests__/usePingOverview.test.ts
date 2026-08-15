@@ -248,6 +248,59 @@ describe("buildPingBuckets", () => {
 
     expect(buckets.every((bucket) => bucket.total === 0)).toBe(true);
   });
+
+  describe("掉线", () => {
+    // 一小时 24 格 = 每格 2.5 分钟。
+    const hourly = Array.from({ length: 60 }, (_, index) =>
+      sample(index, { ct: 40, lossCt: 0 }),
+    );
+    const offlineBuckets = (offlineMinutesAgo: number) =>
+      buildPingBuckets(
+        buildPingOverviewItem("node-a", 1, hourly),
+        24,
+        NOW,
+        NOW - offlineMinutesAgo * MINUTE_MS,
+      );
+
+    it("红格一格一格往左推，掉线不满一格时不涂红", () => {
+      const redCount = (minutes: number) =>
+        offlineBuckets(minutes).filter((bucket) => bucket.offline).length;
+
+      expect(redCount(1)).toBe(0);
+      expect(redCount(3)).toBe(1);
+      expect(redCount(6)).toBe(2);
+      expect(redCount(11)).toBe(4);
+      expect(redCount(61)).toBe(24);
+    });
+
+    it("掉线之后的样本不参与聚合：后端窗口可能还在按墙钟续格子", () => {
+      const stale = [
+        sample(20, { ct: 40, lossCt: 0 }),
+        // 掉线后后端沿用旧值继续铺的格子
+        sample(4, { ct: 40, lossCt: 0 }),
+        sample(1, { ct: 40, lossCt: 0 }),
+      ];
+      const buckets = buildPingBuckets(
+        buildPingOverviewItem("node-a", 1, stale),
+        24,
+        NOW,
+        NOW - 10 * MINUTE_MS,
+      );
+
+      expect(buckets.filter((bucket) => bucket.offline).length).toBe(4);
+      expect(buckets.every((bucket) => !bucket.offline || bucket.total === 0)).toBe(true);
+    });
+
+    it("在线时不标离线格", () => {
+      const buckets = buildPingBuckets(
+        buildPingOverviewItem("node-a", 1, hourly),
+        24,
+        NOW,
+      );
+
+      expect(buckets.some((bucket) => bucket.offline)).toBe(false);
+    });
+  });
 });
 
 describe("resolveHomepagePingRequestMode", () => {

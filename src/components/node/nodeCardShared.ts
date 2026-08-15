@@ -119,6 +119,15 @@ export function healthBarSlotModel(
   bucket: PingOverviewBucket,
   kind: "latency" | "loss",
 ): HealthBarSlotModel {
+  // 掉线段不是「没采到」，是节点没了：延迟和丢包都涂满红，两排颜色一致。
+  if (bucket.offline) {
+    return {
+      active: true,
+      heightFraction: HEALTH_LOSS_BAR_HEIGHT,
+      color: lossHeatColor(100),
+      alpha: 0.94,
+    };
+  }
   if (kind === "latency") {
     const value = bucket.value;
     if (value != null && Number.isFinite(value) && value >= 0) {

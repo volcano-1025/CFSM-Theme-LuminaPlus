@@ -21,6 +21,8 @@ function formatPingBucketWindow(bucket: PingOverviewBucket | null) {
 
 function formatLatencyBucketSummary(bucket: PingOverviewBucket | null) {
   if (!bucket) return "—";
+  // 掉线要和「探测没跑到」区分开：前者是节点整台没了，后者只是这一格没样本。
+  if (bucket.offline) return "离线";
   if (bucket.value != null) return `${trimFixed(bucket.value, 1)} ms`;
   return bucket.total > 0 ? "失败" : "无样本";
 }
@@ -30,6 +32,7 @@ function formatLossBucketSummary(
   separator = " ",
 ) {
   if (!bucket) return "—";
+  if (bucket.offline) return "离线";
   if (bucket.total <= 0 || bucket.loss == null) return "无样本";
   // 后端每个采样点给的是丢包百分比而不是"丢了几个包"，写成 x/y 会误导，
   // 这里只显示百分比与参与聚合的采样点数。

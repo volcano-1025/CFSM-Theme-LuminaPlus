@@ -89,10 +89,17 @@ export function useNodeCardModel(
     hasRealHomepagePingBinding,
     ping.isAssigned,
   );
+  // 掉线后延迟/丢包柱按最后一次上报截断，之后的格子涂红。用 `updatedAt` 而不是
+  // 「发现掉线的时刻」：前者是节点真正停止上报的时间，红色从那里开始才对得上。
+  const offlineSince =
+    metrics && metrics.online === false && metrics.updatedAt > 0
+      ? metrics.updatedAt
+      : null;
   const pingBuckets = usePingBuckets(
     ping,
     pingBucketCount,
     !multiPingActive,
+    offlineSince,
   );
   // 与 usePingBuckets 同理:窗口按分钟前移,不依赖数据刷新才滑动。
   const bucketNow = useMinuteClock(multiPingActive);
@@ -118,13 +125,14 @@ export function useNodeCardModel(
         };
       return {
         ...line,
-        buckets: buildPingBuckets(line, pingBucketCount, bucketNow),
+        buckets: buildPingBuckets(line, pingBucketCount, bucketNow, offlineSince),
       };
     });
   }, [
     bucketNow,
     homepageMultiPingTaskIds,
     multiPingActive,
+    offlineSince,
     pingBucketCount,
     realPingLines,
     uuid,

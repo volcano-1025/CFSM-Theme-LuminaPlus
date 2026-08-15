@@ -11,10 +11,10 @@ describe("formatPingTooltipValue", () => {
     expect(formatPingTooltipValue(42.35, null)).toBe("42.4 ms");
   });
 
-  it("appends the loss when there is any", () => {
-    expect(formatPingTooltipValue(42, 12.4)).toBe("42.0 ms · 丢包 12%");
+  it("puts the loss first so the latency stays in the right-aligned column", () => {
+    expect(formatPingTooltipValue(42, 12.4)).toBe("丢包 12% · 42.0 ms");
     // 不足 1% 取整会变成 0%，看起来像没丢包，所以保留一位小数。
-    expect(formatPingTooltipValue(42, 0.4)).toBe("42.0 ms · 丢包 0.4%");
+    expect(formatPingTooltipValue(42, 0.4)).toBe("丢包 0.4% · 42.0 ms");
   });
 
   it("reports loss alone when the sample timed out", () => {

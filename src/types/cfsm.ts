@@ -550,6 +550,8 @@ export interface PingOverviewBucket {
   lost: number;
   startAt: number | null;
   endAt: number | null;
+  /** 整格都落在节点掉线之后：柱子涂红，而不是当成「没采到」的空格。 */
+  offline?: boolean;
 }
 
 /** 登录态。CF-Server-Monitor 没有 /api/me，由 /api/config 的 authorization 推导。 */

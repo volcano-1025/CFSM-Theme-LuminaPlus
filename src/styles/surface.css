@@ -1432,6 +1432,12 @@ body::after {
   display: none;
 }
 
+/* 触屏拖动辅助线：纵向滑动仍然滚页面，横向的那一笔留给 bindTouchCursor 处理。
+   不写这条的话浏览器会在第一次 touchmove 就自己开始滚，游标根本拖不动。 */
+.instance-uplot-wrap .u-over {
+  touch-action: pan-y;
+}
+
 .instance-uplot-wrap.is-large {
   margin-top: 16px;
 }

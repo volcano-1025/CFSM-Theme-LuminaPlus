@@ -268,11 +268,32 @@ export function useNodePingOverviewLines(
   );
 }
 
+/**
+ * 掉线之后的柱子怎么画。
+ *
+ * `offlineSince` 是节点最后一次上报的时刻（在线时传 null）。它做三件事：
+ *
+ * 1. 丢掉时间戳晚于它的样本。后端 `/api/servers` 的一小时窗口是「没有新数据就沿用
+ *    上一个值」，节点掉线后它很可能照样按墙钟往前铺格子，不挡掉就会拿旧值填满掉线段。
+ * 2. 把最后一个真实样本的延续截断在这里，不再吃 `MAX_SAMPLE_HOLD_MS` 那 5 分钟。
+ * 3. 整格都在它之后的桶标成 `offline`，由卡片涂红。注意是「整格」——掉线当下那一格
+ *    还压着在线数据，要等它被掉线时间填满才变红，柱子于是一格一格往左推。
+ */
+function resolveOfflineSince(offlineSince?: number | null): number | null {
+  return typeof offlineSince === "number" &&
+    Number.isFinite(offlineSince) &&
+    offlineSince > 0
+    ? offlineSince
+    : null;
+}
+
 export function buildPingBuckets(
   ping: Pick<PingOverviewItem, "samples" | "metricIntervalMs" | "emptyTimes">,
   count?: number,
   now = Date.now(),
+  offlineSince?: number | null,
 ): PingOverviewBucket[] {
+  const offlineAt = resolveOfflineSince(offlineSince);
   const totalWindowMs = 60 * 60 * 1000;
   const requestedCount = count ?? MAX_VISIBLE_HOMEPAGE_PING_BUCKETS;
   const boundedRequestedCount =
@@ -312,10 +333,15 @@ export function buildPingBuckets(
   // 也可能是一个明确没有值的槽位（`emptyTimes`）—— 后者要让图表真的留空。
   // 后端一小时窗口的最新一格常常不落在 2 分钟网格上，与上一格能差 4~5 分钟；
   // 不做延续就会在最右边凭空空出一格，而且随着 now 推进时有时无。
+  // 掉线之后的样本一律不认：后端窗口可能还在按墙钟往前铺格子、沿用最后一个已知值。
+  const beforeOffline = (time: number) => offlineAt == null || time <= offlineAt;
+
   const eventTimes = [
     ...(ping.samples ?? []).map((sample) => sample.time),
     ...(ping.emptyTimes ?? []),
-  ].sort((left, right) => left - right);
+  ]
+    .filter(beforeOffline)
+    .sort((left, right) => left - right);
 
   const nextEventAfter = (time: number): number | undefined => {
     let low = 0;
@@ -333,7 +359,7 @@ export function buildPingBuckets(
       ? Math.min(MAX_SAMPLE_HOLD_MS, Math.max(metricIntervalMs, bucketMs) * 2)
       : 0;
 
-  const samples = ping.samples ?? [];
+  const samples = (ping.samples ?? []).filter((sample) => beforeOffline(sample.time));
   for (const [order, sample] of samples.entries()) {
     if (sample.time > now) continue;
 
@@ -342,6 +368,7 @@ export function buildPingBuckets(
       Math.min(
         nextEventAfter(sample.time) ?? Number.POSITIVE_INFINITY,
         sample.time + holdMs,
+        offlineAt ?? Number.POSITIVE_INFINITY,
         now,
       ),
     );
@@ -391,6 +418,9 @@ export function buildPingBuckets(
       lost,
       startAt,
       endAt,
+      // 整格都在掉线之后才算离线格。掉线当下那一格还压着在线数据，
+      // 要等掉线时长把它填满才翻红，于是红色一格一格往左推。
+      offline: offlineAt != null && startAt >= offlineAt,
     };
   });
 }
@@ -399,6 +429,7 @@ export function usePingBuckets(
   ping: Pick<PingOverviewItem, "samples" | "metricIntervalMs" | "emptyTimes">,
   count?: number,
   enabled = true,
+  offlineSince?: number | null,
 ): PingOverviewBucket[] {
   const { samples, metricIntervalMs, emptyTimes } = ping;
   // 数据引用不变时窗口也要随时间前移,否则时间轴最多滞后约 2 个桶;分钟粒度足够
@@ -407,8 +438,13 @@ export function usePingBuckets(
   return useMemo(
     () =>
       enabled
-        ? buildPingBuckets({ samples, metricIntervalMs, emptyTimes }, count, now)
+        ? buildPingBuckets(
+            { samples, metricIntervalMs, emptyTimes },
+            count,
+            now,
+            offlineSince,
+          )
         : EMPTY_PING_BUCKETS,
-    [count, emptyTimes, enabled, metricIntervalMs, now, samples],
+    [count, emptyTimes, enabled, metricIntervalMs, now, offlineSince, samples],
   );
 }

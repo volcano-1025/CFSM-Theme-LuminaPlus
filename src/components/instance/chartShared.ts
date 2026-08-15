@@ -230,6 +230,43 @@ function getChartTooltipPosition({
   return { left, top };
 }
 
+/**
+ * 触屏上的游标拖动。
+ *
+ * uPlot 只绑鼠标事件，手指划过画布不会触发 mousemove（浏览器只在点按抬起后补一次
+ * 合成事件），所以移动端的辅助线是钉死的、拖不动。这里把 touch 事件直接翻成
+ * `setCursor`。配套的 `.u-over { touch-action: pan-y }` 让纵向滑动照常滚页面，
+ * 横向拖动才归我们；接管期间 `preventDefault` 防止浏览器再把它当成滚动。
+ *
+ * 抬手不清游标：手指一离开就把数值收走，等于没法读。停在原处直到下一次触摸。
+ */
+function bindTouchCursor(u: uPlot): () => void {
+  const over = u.over;
+  const apply = (touch: Touch) => {
+    const rect = over.getBoundingClientRect();
+    u.setCursor({
+      left: clamp(touch.clientX - rect.left, 0, rect.width),
+      top: clamp(touch.clientY - rect.top, 0, rect.height),
+    });
+  };
+  const onStart = (event: TouchEvent) => {
+    const touch = event.touches[0];
+    if (touch) apply(touch);
+  };
+  const onMove = (event: TouchEvent) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    if (event.cancelable) event.preventDefault();
+    apply(touch);
+  };
+  over.addEventListener("touchstart", onStart, { passive: true });
+  over.addEventListener("touchmove", onMove, { passive: false });
+  return () => {
+    over.removeEventListener("touchstart", onStart);
+    over.removeEventListener("touchmove", onMove);
+  };
+}
+
 export function buildChartTooltipHooks({
   dataRef,
   rangeHours,
@@ -249,6 +286,7 @@ export function buildChartTooltipHooks({
 } {
   let frame: number | null = null;
   let view: Window | null = null;
+  let unbindTouch: (() => void) | null = null;
   const cancelScheduled = () => {
     if (frame != null) view?.cancelAnimationFrame(frame);
     frame = null;
@@ -295,10 +333,13 @@ export function buildChartTooltipHooks({
     onInit: (u) => {
       view = u.root.ownerDocument.defaultView;
       u.root.addEventListener("mouseleave", hide);
+      unbindTouch = bindTouchCursor(u);
     },
     onDestroy: (u) => {
       cancelScheduled();
       u.root.removeEventListener("mouseleave", hide);
+      unbindTouch?.();
+      unbindTouch = null;
       view = null;
     },
     onSetCursor: (u) => {

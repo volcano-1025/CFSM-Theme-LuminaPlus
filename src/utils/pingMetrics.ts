@@ -75,6 +75,8 @@ export function formatPingLoss(pct: number) {
 /**
  * Ping tooltip 里一行的数值。
  *
+ * 丢包在前、延迟在后：tooltip 的数值列是右对齐的，把延迟固定放在末尾，
+ * 有丢包的那行和没丢包的那行 ms 才落在同一列上。
  * 丢包 0 不写出来，避免每行拖一截噪音；整点全丢时延迟本来就是空的，
  * 这时只报丢包，比一个「—」有用。
  */
@@ -85,7 +87,7 @@ export function formatPingTooltipValue(
   const hasLoss = lossPct != null && lossPct > 0;
   if (latencyMs == null) return hasLoss ? `丢包 ${formatPingLoss(lossPct)}` : "—";
   const latency = `${latencyMs.toFixed(1)} ms`;
-  return hasLoss ? `${latency} · 丢包 ${formatPingLoss(lossPct)}` : latency;
+  return hasLoss ? `丢包 ${formatPingLoss(lossPct)} · ${latency}` : latency;
 }
 
 /** 升序数组里离 value 最近的下标。 */
