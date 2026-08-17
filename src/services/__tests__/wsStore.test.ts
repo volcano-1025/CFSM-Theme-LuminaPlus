@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTrafficTotal, resolveWsFlushWindowMs } from "@/services/wsStore";
+import { resolveTrafficTotal, resolveWsPlaybackIntervalMs } from "@/services/wsStore";
 
 // 像 resolveTrafficTotals 每个 tick 那样,把一串原始累计读数喂给 resolver:把上一个显示值
 //(store 存在 node metrics 上)往后传。
@@ -42,27 +42,22 @@ describe("resolveTrafficTotal", () => {
   });
 });
 
-describe("resolveWsFlushWindowMs", () => {
-  it("falls back to the default window before an interval is measured", () => {
-    // 间隔未知（0）+ 节点少：用偏大的默认窗口，压住刚连上时的快照/追帧突刺。
-    expect(resolveWsFlushWindowMs(0, 5)).toBe(1_000);
+describe("resolveWsPlaybackIntervalMs", () => {
+  it("falls back to the default cadence before a sampling interval is measured", () => {
+    expect(resolveWsPlaybackIntervalMs(0)).toBe(1_000);
   });
 
-  it("tracks the measured report interval when volume is light", () => {
-    // 上报约 1s 一次 → 每秒渲染一次就够，不快于数据变化频率就不会闪。
-    expect(resolveWsFlushWindowMs(1_000, 5)).toBe(1_000);
+  it("plays back at the measured sampling interval (one point per second)", () => {
+    // 后端每 4s 打包 4 个采样点、点间 1s → 前端应每 1s 回放一个。
+    expect(resolveWsPlaybackIntervalMs(1_000)).toBe(1_000);
   });
 
-  it("widens the window for high node counts (render-budget floor)", () => {
-    // 100 台 ÷ 每秒 200 个节点次 = 500ms 下限，超过实测的 200ms 间隔。
-    expect(resolveWsFlushWindowMs(200, 100)).toBe(500);
+  it("follows a sub-second sampling interval down to the floor", () => {
+    expect(resolveWsPlaybackIntervalMs(300)).toBe(300);
+    expect(resolveWsPlaybackIntervalMs(100)).toBe(250);
   });
 
-  it("clamps to the maximum so updates never feel stale", () => {
-    expect(resolveWsFlushWindowMs(5_000, 10)).toBe(2_000);
-  });
-
-  it("clamps to the minimum so a very fast stream stays responsive", () => {
-    expect(resolveWsFlushWindowMs(50, 1)).toBe(120);
+  it("clamps a very large sampling interval so playback never stalls", () => {
+    expect(resolveWsPlaybackIntervalMs(10_000)).toBe(3_000);
   });
 });
