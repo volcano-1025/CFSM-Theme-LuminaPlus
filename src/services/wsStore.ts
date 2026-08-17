@@ -626,10 +626,24 @@ async function performServersSync() {
 
       const previousMetrics = state.metricsByUuid[uuid];
       // 列表接口自带最新指标，可直接作为实时值使用。
-      const nextMetrics = carryForwardTotals(
+      const restMetrics = carryForwardTotals(
         toNodeMetrics(server, now, previousMetrics),
         previousMetrics ?? emptyNodeMetrics(info, isServerOnline(server, now)),
       );
+      // `/api/servers` 是缓存快照，`last_updated` 常比 WS 推来的样本旧十几到几十秒，而其中的
+      // 瞬时速率又明显偏高（线上实测个别节点 REST 24KB/s vs WS 0.8KB/s，合计约 4 倍）。
+      // 每 30 秒一次的全量刷新若照单全收，就会拿这份旧值盖掉新鲜的 WS 实时值，
+      // 「实时带宽」于是每半分钟被重新抬高一次再慢慢掉回去。快照不比现值新时，
+      // 只取 WS 不下发的字段（月度累计等），实时部分保持现值。
+      const nextMetrics =
+        previousMetrics && previousMetrics.updatedAt > restMetrics.updatedAt
+          ? {
+              ...previousMetrics,
+              online: restMetrics.online,
+              trafficUpMonthly: restMetrics.trafficUpMonthly,
+              trafficDownMonthly: restMetrics.trafficDownMonthly,
+            }
+          : restMetrics;
       const alignedMetrics = alignEmptyMetricsTotals(nextMetrics, info);
       if (!previousMetrics || !shallowEqualMetrics(previousMetrics, alignedMetrics)) {
         metricsByUuid[uuid] = alignedMetrics;

@@ -4,7 +4,6 @@ import { AppShell } from "@/components/shell/AppShell";
 import { RouteErrorFallback } from "@/components/shell/ErrorBoundary";
 import { Spinner } from "@/components/ui/Spinner";
 import { loadAssetsPage } from "@/services/assetsPageLoader";
-import { Traffic } from "@/pages/Traffic";
 import { Home } from "@/pages/Home";
 
 const Instance = lazy(() =>
@@ -58,10 +57,6 @@ export const router = createHashRouter([
       {
         path: "assets",
         element: suspended(<Assets />),
-      },
-      {
-        path: "traffic",
-        element: <Traffic />,
       },
       {
         path: "404",

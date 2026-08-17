@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { CircleDollarSign } from "lucide-react";
 import { Flag } from "@/components/ui/Flag";
 import { useAuth } from "@/hooks/useAuth";
@@ -36,7 +36,6 @@ import { useHomeSort } from "@/hooks/useHomeSort";
 import { useHomeNodeOrder } from "@/hooks/useHomeNodeOrder";
 import { useHourlyClock } from "@/hooks/useClock";
 import { preloadAssetsPage } from "@/services/assetsPageLoader";
-import { preloadTodayTrafficStats } from "@/hooks/useTodayTrafficStats";
 import { usePacedRate } from "@/hooks/usePacedRate";
 import { HomeSortControl } from "./HomeSortControl";
 import {
@@ -87,22 +86,6 @@ function formatCompactBytes(value: number): string {
   return `${amount}${unit[0]}`;
 }
 
-function TrafficBarsIcon({ size = 19 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 20 20"
-      fill="none"
-      aria-hidden
-    >
-      <rect x="2" y="10" width="4" height="8" rx="1.2" fill="currentColor" />
-      <rect x="8" y="5.5" width="4" height="12.5" rx="1.2" fill="currentColor" />
-      <rect x="14" y="2" width="4" height="16" rx="1.2" fill="currentColor" />
-    </svg>
-  );
-}
-
 // 站点铭牌由 CSS 放进 AppShell 顶部留白，不占概览卡内容流。
 function HomeBrand({ siteName }: { siteName: string }) {
   return (
@@ -129,7 +112,6 @@ function HomeOverviewCards({
   showDetailButton,
   renewalNodes,
   dense,
-  onWarmTraffic,
 }: {
   overview: HomeOverview;
   costSummary: { remainingCny: number } | null;
@@ -145,7 +127,6 @@ function HomeOverviewCards({
   assetRatingLabels: string;
   showDetailButton: boolean;
   renewalNodes: RenewalReminderSource[];
-  onWarmTraffic: () => void;
 }) {
   const [trafficValue, trafficUnit] = formatBytes(
     overview.trafficUp + overview.trafficDown,
@@ -251,17 +232,6 @@ function HomeOverviewCards({
       <article className="overview-card" data-metric="traffic">
         <div className="overview-card-head">
           <span className="overview-card-label">累计流量</span>
-          <Link
-            to="/traffic"
-            className="overview-card-action"
-            aria-label="打开今日流量统计页"
-            title="今日流量统计"
-            onPointerEnter={onWarmTraffic}
-            onFocus={onWarmTraffic}
-            onClick={onWarmTraffic}
-          >
-            <TrafficBarsIcon />
-          </Link>
         </div>
         <div className="overview-card-main">
           <p className="overview-card-value">
@@ -371,7 +341,6 @@ function RegionTabs({
 
 export function NodeGrid() {
   const now = useHourlyClock();
-  const queryClient = useQueryClient();
   const nodes = useHomeNodeSummaries();
   const nodeOnlineSummaries = useNodeOnlineSummaries();
   const allMeta = useAllNodeMeta();
@@ -416,13 +385,6 @@ export function NodeGrid() {
       online: onlineByUuid.get(node.uuid) ?? null,
     }));
   }, [nodeOnlineSummaries, visibleMeta]);
-  const trafficUuids = useMemo(
-    () => visibleMeta.map((node) => node.uuid),
-    [visibleMeta],
-  );
-  const warmTrafficPage = useCallback(() => {
-    void preloadTodayTrafficStats(queryClient, trafficUuids, Date.now());
-  }, [queryClient, trafficUuids]);
   // 「名称」排序需要展示名(摘要无 name),从 meta 注入。
   const nameByUuid = useMemo(() => {
     const map = new Map<string, string>();
@@ -705,7 +667,6 @@ export function NodeGrid() {
           trafficRatingLabels={themeSettings.trafficRatingLabels}
           bandwidthRatingLabels={themeSettings.bandwidthRatingLabels}
           assetRatingLabels={themeSettings.assetRatingLabels}
-          onWarmTraffic={warmTrafficPage}
         />
       )}
     </>
