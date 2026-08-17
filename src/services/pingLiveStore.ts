@@ -252,10 +252,13 @@ function sameSeries(a: readonly PingLiveSample[], b: readonly PingLiveSample[]):
 }
 
 /**
- * 用后端下发的一小时窗口替换缓冲区。
+ * 把后端下发的窗口并进缓冲区。
  *
- * 窗口是权威数据；本地累积里比窗口最后一点更新的样本会保留下来，
- * 这样两次 `/api/servers` 之间由 WebSocket 记下的最新点不会被覆盖掉。
+ * 按时间戳取并集，同一时刻以后端为准 —— 不能用「窗口整体替换、只保留比窗口末点更新的本地样本」：
+ * 实测后端窗口并不是严格滑动的一小时（线上 7 台节点一致：2 分钟网格铺到约 35 分钟前就停了，
+ * 末尾直接追加一个「当前」点，跨度反而有 90 分钟）。窗口末点既然约等于现在，
+ * 「只留更新的」就等于把本地样本全判成旧的丢掉，每次 `/api/servers` 同步都会把浏览器
+ * 攒下来（并已持久化）的那段擦成空洞 —— 首页柱子于是缺一大段，正是本地缓冲能补上的那段。
  */
 export function seedPingHistory(
   uuid: string,
@@ -268,13 +271,14 @@ export function seedPingHistory(
   const fresh = window.filter((sample) => isFresh(sample, now));
   if (fresh.length === 0) return;
 
-  const lastSeededTime = fresh[fresh.length - 1]!.time;
   const local = samplesByUuid.get(uuid) ?? EMPTY_SAMPLES;
-  const newerLocal = local.filter(
-    (sample) => sample.time > lastSeededTime && isFresh(sample, now),
-  );
-
-  const merged = [...fresh, ...newerLocal];
+  const byTime = new Map<number, PingLiveSample>();
+  for (const sample of local) {
+    if (isFresh(sample, now)) byTime.set(sample.time, sample);
+  }
+  // 后端权威：同一时间戳覆盖本地那份。
+  for (const sample of fresh) byTime.set(sample.time, sample);
+  const merged = [...byTime.values()].sort((left, right) => left.time - right.time);
   const next =
     merged.length > MAX_SAMPLES_PER_NODE
       ? merged.slice(-MAX_SAMPLES_PER_NODE)

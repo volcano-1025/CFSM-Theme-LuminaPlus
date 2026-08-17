@@ -194,6 +194,32 @@ describe("seedPingHistory", () => {
     expect(samples.at(-1)?.ping.ct).toBe(99);
   });
 
+  it("keeps locally accumulated samples that fill a hole in the window", () => {
+    // 线上实测的窗口形状：2 分钟网格在约 35 分钟前就停了，末尾直接追加一个「当前」点，
+    // 中间是空洞。浏览器攒下的样本正好覆盖那段，不能因为它们比窗口末点旧就被丢掉。
+    const holeyWindow: PingLiveSample[] = [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        time: NOW - 55 * 60_000 + index * 120_000,
+        ping: ping({ ct: 30 + index, lossCt: 0 }),
+      })),
+      { time: NOW, ping: ping({ ct: 42, lossCt: 0 }) },
+    ];
+    // 空洞期间本地记下的点（例如上次开着页面时累积、并已持久化）。
+    recordPingSample("node-a", NOW - 20 * 60_000, ping({ ct: 55 }));
+    recordPingSample("node-a", NOW - 10 * 60_000, ping({ ct: 56 }));
+
+    seedPingHistory("node-a", holeyWindow);
+
+    const samples = getPingHistorySnapshot("node-a");
+    const times = samples.map((sample) => sample.time);
+    expect(times).toContain(NOW - 20 * 60_000);
+    expect(times).toContain(NOW - 10 * 60_000);
+    expect(samples).toHaveLength(15);
+    // 仍按时间升序，且同一时刻以后端为准。
+    expect([...times].sort((a, b) => a - b)).toEqual(times);
+    expect(samples.at(-1)?.ping.ct).toBe(42);
+  });
+
   it("does not notify subscribers when the window is unchanged", () => {
     seedPingHistory("node-a", backendWindow());
     const listener = vi.fn();
