@@ -87,35 +87,19 @@ const ONLINE_RECHECK_INTERVAL_MS = 15_000;
 const SERVERS_REQUEST_TIMEOUT_MS = 8_000;
 
 /* ------------------------------------------------------------------ *
- * WebSocket 推送回放（按采样节奏铺开）
+ * WebSocket 推送合流（轻量去抖）
  * ------------------------------------------------------------------ */
 /**
- * 后端 WSS 每个"上报间隔"（2/4/8/12s）推一批，一批里打包了这段时间内**每秒一个**的采样点
- * （采样间隔约 1s）。若来一批就塌缩成最新值显示，会变成"上报间隔才跳一次"（后端作者明确要避免的
- * 坏情况）；正确做法是把这批点按采样间隔**逐个回放**，前端就「每秒更新一次」、平顺。
+ * 实测（monitor.8881025.xyz，agent v1.0.7）：后端 WSS 是**逐台的实时流**——每条消息一台节点、
+ * 一个样本、各带真实 ts；活跃节点约 **2 秒**一条（ts 间距 1999/2002/2000…），并非「一批打包多点」。
+ * 慢节点偶尔会把攒下的几帧（ts 相隔约 10s 的历史点）一次性补发。
  *
- * 于是这里给每台节点维护一条 FIFO 队列，一个统一的回放定时器按采样间隔每拍弹出各节点最老的一个点、
- * 合成一次提交。采样间隔从样本 ts 的相邻差实测（EMA）。节点数量不再影响节奏——一拍一次提交，
- * 无论多少节点都在同一次 React 批里渲染。队列设上限：积压过多（如刚连上时的大段追帧）就丢最老的、
- * 快进到接近实时，避免越拖越久。
+ * 所以正确做法很简单：每台节点只留**最新**样本，用一个很短的窗口把「同一刻到达的多台」并成一次渲染，
+ * 到点提交。这样每台按自己的 ~2s 节奏近实时刷新、不再「一秒跳好几个」；慢节点的补发只显示最新一帧、
+ * 不回放旧点，也就不会「刚打开乱跳」。数据本身就是 2s/台，前端无法凭空变出每秒的值
+ * （后台看着 1s 平滑是它在做插值动画，是另一回事——见 CHANGELOG 说明）。
  */
-const WS_PLAYBACK_MIN_MS = 250;
-const WS_PLAYBACK_MAX_MS = 3_000;
-/** 还没测出采样间隔前的兜底回放节奏。 */
-const WS_PLAYBACK_DEFAULT_MS = 1_000;
-/** 采样间隔 EMA 的平滑系数（新样本权重）。 */
-const WS_SAMPLING_INTERVAL_ALPHA = 0.2;
-/**
- * 每台节点最多缓冲多少个待回放样本。稳态下一批的点数（上报间隔 ÷ 采样间隔，如 12s÷1s=12）不该超过它；
- * 超了说明在积压（回放慢于到达，或刚连上时的大段追帧），丢最老的、快进到接近实时。
- */
-const WS_PLAYBACK_MAX_QUEUE = 16;
-
-/** 由实测采样间隔算出回放节奏（毫秒），钳在 [MIN, MAX]；未测出用兜底。 */
-export function resolveWsPlaybackIntervalMs(samplingIntervalMs: number): number {
-  const interval = samplingIntervalMs > 0 ? samplingIntervalMs : WS_PLAYBACK_DEFAULT_MS;
-  return Math.min(WS_PLAYBACK_MAX_MS, Math.max(WS_PLAYBACK_MIN_MS, interval));
-}
+const WS_FLUSH_WINDOW_MS = 300;
 const SCROLL_IDLE_DELAY_MS = 160;
 const TRAFFIC_TREND_SAMPLE_COUNT = 18;
 
@@ -726,153 +710,79 @@ async function performServersSync() {
 }
 
 /* ------------------------------------------------------------------ *
- * WebSocket 推送回放缓冲
+ * WebSocket 推送合流缓冲
  * ------------------------------------------------------------------ */
-/** 每台节点一条按 ts 升序的待回放队列。 */
-const wsQueueByServer = new Map<string, WsSample[]>();
-/** 各节点已应用到的最新 ts，用来丢弃回退/重复样本。 */
-const wsAppliedTsByServer = new Map<string, number>();
-let wsPlaybackTimer: number | null = null;
-/** 实测采样间隔的 EMA（毫秒）；0 = 还没测出。 */
-let wsSamplingIntervalEmaMs = 0;
-const wsLastSeenTsByServer = new Map<string, number>();
+/** 每台节点只保留最新一个待提交样本；同一刻到达的多台由短窗口并成一次渲染。 */
+const wsLatestByServer = new Map<string, WsSample>();
+let wsFlushTimer: number | null = null;
 
 /**
- * 诊断开关：URL 带 `?wsdebug=1` 时，把每拍回放的采样间隔 / 回放节奏 / 本拍节点数 / 队列余量
- * 打到控制台。用来确认前端是否按「每采样间隔一拍」把整批点铺开（而不是塌缩成一次）。
- * 本地无 WSS，只能靠线上这份输出校准。
+ * 诊断开关：URL 带 `?wsdebug=1` 时，把每次合流的节点数 / 距上次时长打到控制台。
+ * 本地无 WSS，只能靠线上这份输出核对。
  */
 const WS_DEBUG =
   typeof location !== "undefined" && /[?&]wsdebug=1(?:&|$)/.test(location.search);
-let wsDebugTicks = 0;
-let wsDebugSamplesTotal = 0;
+let wsDebugFlushes = 0;
+let wsDebugLastFlushAt = 0;
 
-/** 供控制台随时读取当前回放状态，配合 `?wsdebug=1` 使用。 */
-export function getWsPlaybackStats() {
-  let queued = 0;
-  let maxQueue = 0;
-  for (const queue of wsQueueByServer.values()) {
-    queued += queue.length;
-    if (queue.length > maxQueue) maxQueue = queue.length;
-  }
+/** 供控制台随时读取当前合流状态，配合 `?wsdebug=1` 使用。 */
+export function getWsCoalesceStats() {
   return {
-    samplingIntervalEmaMs: Math.round(wsSamplingIntervalEmaMs),
-    playbackIntervalMs: resolveWsPlaybackIntervalMs(wsSamplingIntervalEmaMs),
+    windowMs: WS_FLUSH_WINDOW_MS,
+    pendingServers: wsLatestByServer.size,
     serverCount: state.order.length,
-    queuedSamples: queued,
-    maxQueueDepth: maxQueue,
-    ticks: wsDebugTicks,
-    samplesTotal: wsDebugSamplesTotal,
+    flushes: wsDebugFlushes,
   };
 }
 
-/** 从样本 ts 的相邻差实测采样间隔（一批内相邻点的间距，约 1s），喂进 EMA。 */
-function observeSamplingInterval(samples: WsSample[]): void {
-  for (const sample of samples) {
-    const ts = normalizeTimestamp(sample.ts);
-    if (ts <= 0) continue;
-    const last = wsLastSeenTsByServer.get(sample.serverId);
-    wsLastSeenTsByServer.set(sample.serverId, ts);
-    if (last == null || ts <= last) continue;
-    const gap = ts - last;
-    // 只认合理区间内的间隔：滤掉重复帧（≈0）与掉线补发（过大）带来的污染。
-    if (gap < WS_PLAYBACK_MIN_MS || gap > WS_PLAYBACK_MAX_MS * 4) continue;
-    wsSamplingIntervalEmaMs =
-      wsSamplingIntervalEmaMs === 0
-        ? gap
-        : wsSamplingIntervalEmaMs * (1 - WS_SAMPLING_INTERVAL_ALPHA) +
-          gap * WS_SAMPLING_INTERVAL_ALPHA;
+function flushWsSamples(): void {
+  wsFlushTimer = null;
+  if (wsLatestByServer.size === 0) return;
+  const batch = [...wsLatestByServer.values()];
+  wsLatestByServer.clear();
+  if (WS_DEBUG) {
+    const now = Date.now();
+    const gap = wsDebugLastFlushAt > 0 ? now - wsDebugLastFlushAt : 0;
+    wsDebugLastFlushAt = now;
+    wsDebugFlushes += 1;
+    console.info(
+      `[LuminaPlus WS] flush#${wsDebugFlushes} 更新${batch.length}节点 · ` +
+        `距上次${gap}ms · 窗口${WS_FLUSH_WINDOW_MS}ms · 节点${state.order.length}`,
+    );
   }
-}
-
-function scheduleWsPlayback(): void {
-  if (wsPlaybackTimer != null) return;
-  wsPlaybackTimer = window.setTimeout(
-    playbackTick,
-    resolveWsPlaybackIntervalMs(wsSamplingIntervalEmaMs),
-  );
-}
-
-/** 弹出各节点队首一个样本、合成一次提交；队列还有货就按采样节奏排下一拍，否则停表。 */
-function playbackTick(): void {
-  wsPlaybackTimer = null;
-  const batch: WsSample[] = [];
-  let remaining = 0;
-  for (const [serverId, queue] of wsQueueByServer) {
-    const sample = queue.shift();
-    if (sample) {
-      wsAppliedTsByServer.set(serverId, normalizeTimestamp(sample.ts));
-      batch.push(sample);
-    }
-    if (queue.length === 0) wsQueueByServer.delete(serverId);
-    else remaining += queue.length;
-  }
-
-  if (batch.length > 0) {
-    if (WS_DEBUG) {
-      wsDebugTicks += 1;
-      console.info(
-        `[LuminaPlus WS] tick#${wsDebugTicks} 回放${batch.length}节点 · ` +
-          `采样间隔EMA ${Math.round(wsSamplingIntervalEmaMs)}ms · ` +
-          `回放节奏${resolveWsPlaybackIntervalMs(wsSamplingIntervalEmaMs)}ms · ` +
-          `队列余${remaining} · 节点${state.order.length}`,
-      );
-    }
-    applyWsSamples(batch);
-  }
-
-  if (remaining > 0) scheduleWsPlayback();
+  applyWsSamples(batch);
 }
 
 /**
- * WS 推送入口：把一批样本按 ts 入各节点队列，由回放定时器按采样节奏逐个铺开。
- * 后端一批打包了 N 秒的 N 个采样点，直接塌缩成最新值会"N 秒才跳一次"；逐拍回放让前端"每秒更新"。
+ * WS 推送入口：每台节点只留最新样本，短窗口（尾沿）内到达的多台并成一次渲染。
+ * 逐台实时流照此近实时铺出；慢节点一次补发多帧也只显示最新一帧、不回放旧点。
  */
 function enqueueWsSamples(samples: WsSample[]): void {
   if (samples.length === 0) return;
-  if (WS_DEBUG) wsDebugSamplesTotal += samples.length;
-  observeSamplingInterval(samples);
 
-  const startImmediately = wsPlaybackTimer == null && wsQueueByServer.size === 0;
   for (const sample of samples) {
     const ts = normalizeTimestamp(sample.ts);
-    // 丢弃不比"已应用"或"当前已显示"（REST 首屏快照）更新的样本：避免刚连上时把节点
-    // 倒回若干秒去重放旧追帧，也避免回退/重复。
+    // 不把当前已显示（REST 首屏或已应用）的节点倒回更旧的样本。
     const shownTs = normalizeTimestamp(state.rawByUuid[sample.serverId]?.last_updated ?? 0);
-    const floorTs = Math.max(wsAppliedTsByServer.get(sample.serverId) ?? 0, shownTs);
-    if (ts > 0 && ts <= floorTs) continue;
-    let queue = wsQueueByServer.get(sample.serverId);
-    if (!queue) {
-      queue = [];
-      wsQueueByServer.set(sample.serverId, queue);
-    }
-    // 同一 ts 已在队尾则跳过（同批重复推送）。
-    const lastQueued = queue.length > 0 ? normalizeTimestamp(queue[queue.length - 1]!.ts) : 0;
-    if (ts > 0 && ts === lastQueued) continue;
-    queue.push(sample);
-    // 积压过多（回放慢于到达，或刚连上时的大段追帧）：丢最老的、快进到接近实时。
-    if (queue.length > WS_PLAYBACK_MAX_QUEUE) {
-      queue.splice(0, queue.length - WS_PLAYBACK_MAX_QUEUE);
-    }
+    if (ts > 0 && ts <= shownTs) continue;
+    const prev = wsLatestByServer.get(sample.serverId);
+    if (prev && ts > 0 && normalizeTimestamp(prev.ts) >= ts) continue;
+    wsLatestByServer.set(sample.serverId, sample);
   }
 
-  if (wsQueueByServer.size === 0) return;
-  // 空闲后第一拍立刻出（跟手），之后按采样节奏排队回放。
-  if (startImmediately) playbackTick();
-  else scheduleWsPlayback();
+  if (wsLatestByServer.size > 0 && wsFlushTimer == null) {
+    wsFlushTimer = window.setTimeout(flushWsSamples, WS_FLUSH_WINDOW_MS);
+  }
 }
 
-function resetWsPlaybackState(): void {
-  if (wsPlaybackTimer != null) {
-    window.clearTimeout(wsPlaybackTimer);
-    wsPlaybackTimer = null;
+function resetWsCoalesceState(): void {
+  if (wsFlushTimer != null) {
+    window.clearTimeout(wsFlushTimer);
+    wsFlushTimer = null;
   }
-  wsQueueByServer.clear();
-  wsAppliedTsByServer.clear();
-  wsLastSeenTsByServer.clear();
-  wsSamplingIntervalEmaMs = 0;
-  wsDebugTicks = 0;
-  wsDebugSamplesTotal = 0;
+  wsLatestByServer.clear();
+  wsDebugFlushes = 0;
+  wsDebugLastFlushAt = 0;
 }
 
 /** 实时样本落到已知节点上；未知节点等下一次全量刷新再出现。 */
@@ -1106,7 +1016,7 @@ function stopStore() {
   syncController?.abort();
   syncController = null;
   closeAllConnections();
-  resetWsPlaybackState();
+  resetWsCoalesceState();
   for (const timer of [pollTimer, fullRefreshTimer, onlineTimer]) {
     if (timer != null) window.clearInterval(timer);
   }

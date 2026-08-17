@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTrafficTotal, resolveWsPlaybackIntervalMs } from "@/services/wsStore";
+import { resolveTrafficTotal } from "@/services/wsStore";
 
 // 像 resolveTrafficTotals 每个 tick 那样,把一串原始累计读数喂给 resolver:把上一个显示值
 //(store 存在 node metrics 上)往后传。
@@ -39,25 +39,5 @@ describe("resolveTrafficTotal", () => {
 
   it("does not surface a value until a real reading arrives", () => {
     expect(drive([0, 0, 10])).toEqual([0, 0, 10]);
-  });
-});
-
-describe("resolveWsPlaybackIntervalMs", () => {
-  it("falls back to the default cadence before a sampling interval is measured", () => {
-    expect(resolveWsPlaybackIntervalMs(0)).toBe(1_000);
-  });
-
-  it("plays back at the measured sampling interval (one point per second)", () => {
-    // 后端每 4s 打包 4 个采样点、点间 1s → 前端应每 1s 回放一个。
-    expect(resolveWsPlaybackIntervalMs(1_000)).toBe(1_000);
-  });
-
-  it("follows a sub-second sampling interval down to the floor", () => {
-    expect(resolveWsPlaybackIntervalMs(300)).toBe(300);
-    expect(resolveWsPlaybackIntervalMs(100)).toBe(250);
-  });
-
-  it("clamps a very large sampling interval so playback never stalls", () => {
-    expect(resolveWsPlaybackIntervalMs(10_000)).toBe(3_000);
   });
 });
