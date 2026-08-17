@@ -316,6 +316,23 @@ export function PingChart({
     if (!times?.length) return null;
     return historyCoverageLabel(coverageMeta, times[0], times[times.length - 1]);
   }, [chart, coverageMeta]);
+  // 后端每次查询固定只返回约 120 个点，区间越长采样越粗（1 小时约 30 秒一个，1 天约 12 分钟
+  // 一个）。把分辨率写出来，读者才明白为什么同一段丢包在短区间看得到、长区间就没了。
+  const samplingLabel = useMemo(() => {
+    if (sortedRecords.length < 2) return null;
+    const seconds = detectTypicalIntervalSeconds(
+      sortedRecords.map(({ time }) => time),
+      0,
+    );
+    if (!Number.isFinite(seconds) || seconds <= 0) return null;
+    const text =
+      seconds >= 60
+        ? `${Number((seconds / 60).toFixed(seconds % 60 === 0 ? 0 : 1))} 分钟`
+        : `${Math.round(seconds)} 秒`;
+    return `每 ${text}一个采样点`;
+  }, [sortedRecords]);
+  const panelDescription =
+    [coverageLabel, samplingLabel].filter(Boolean).join(" · ") || undefined;
 
   // 纵轴恒定从 0 起：截取中间一段会把 210ms 和 240ms 画成天差地别，看不出真实量级。
   const yRange = useMemo<[number | null, number | null]>(() => {
@@ -538,13 +555,13 @@ export function PingChart({
   }
 
   return (
-    <InstancePanel title="Ping 图表" description={coverageLabel ?? undefined}>
+    <InstancePanel title="Ping 图表" description={panelDescription}>
       <div className="instance-ping-toolbar">
         <SwitchToggle
           label="丢包色带"
           active={showLoss}
           onToggle={() => setShowLoss((value) => !value)}
-          title="在图表上方按线路显示丢包率色带：越红丢得越多，空缺表示该时段没有采样。不受削峰平滑影响。"
+          title="在图表上方按线路显示丢包率色带：越红丢得越多，空缺表示该时段没有采样。不受削峰平滑影响。注意：后端每次查询固定只返回约 120 个采样点，区间越长采样越粗（1 天约 12 分钟一个），持续一两分钟的短促丢包可能整段没被采到 —— 同一次丢包在 1 小时图里看得见、在 1 天图里消失属于此原因。"
         />
         <SwitchToggle
           label="削峰平滑"

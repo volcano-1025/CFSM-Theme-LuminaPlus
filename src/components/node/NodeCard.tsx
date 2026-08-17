@@ -32,7 +32,6 @@ import { MetricBar } from "./MetricBar";
 import { LatencyBars } from "./LatencyBars";
 import { QualityBars } from "./QualityBars";
 import { CanvasStrip, mixSrgbTowardWhite, safeCanvasColor } from "./CanvasStrip";
-import { NodeTodayTrafficPopover } from "./NodeTodayTrafficPopover";
 import {
   joinTagTitle,
   nodeDetailLinkLabels,
@@ -53,10 +52,8 @@ type DisplayTag = { label: string; color: string };
 
 export const NodeCard = memo(function NodeCard({
   uuid,
-  showTodayTraffic = true,
 }: {
   uuid: string;
-  showTodayTraffic?: boolean;
 }) {
   const { resolvedAppearance } = usePreferences();
   // 自定义配色改动时 version 自增，拼进 redrawKey 让 canvas 进度条即时重画（含离线静态卡）。
@@ -115,7 +112,6 @@ export const NodeCard = memo(function NodeCard({
           node={node}
           subtitle={subtitle}
           osName={osName}
-          showTodayTraffic={showTodayTraffic}
         />
 
         <div className="server-card-stack">
@@ -195,12 +191,10 @@ function NodeCardHeader({
   node,
   subtitle,
   osName,
-  showTodayTraffic,
 }: {
   node: NodeCardNode;
   subtitle: string;
   osName: string;
-  showTodayTraffic: boolean;
 }) {
   const detailLabels = nodeDetailLinkLabels(node.name, osName);
   return (
@@ -228,7 +222,6 @@ function NodeCardHeader({
         )}
       </div>
       <div className="server-card-actions">
-        {showTodayTraffic && <NodeTodayTrafficPopover uuid={node.uuid} />}
         <Link
           to={`/server/${encodeURIComponent(node.uuid)}`}
           className="server-card-detail-link"

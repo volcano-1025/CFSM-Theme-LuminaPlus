@@ -275,7 +275,6 @@ function pickManagedThemeSettings(settings: ResolvedThemeSettings) {
     compactShowBilling: settings.compactShowBilling,
     compactShowUptime: settings.compactShowUptime,
     showConnections: settings.showConnections,
-    showTodayTrafficPopover: settings.showTodayTrafficPopover,
     hiddenNodes: settings.hiddenNodes,
     costIgnoredNodes: settings.costIgnoredNodes,
     // 按键排序:costPremiums 的键序随编辑历史漂移(删掉再加回同一键会排到最后),而 dirty /
@@ -1601,13 +1600,6 @@ export function ThemeManage() {
             </span>
           </div>
           <div className="mt-2 grid gap-3 md:grid-cols-2">
-            <ToggleRow
-              field="showTodayTrafficPopover"
-              title="显示今日流量悬浮窗"
-              desc="在大卡片、小卡片与迷你卡片标题旁显示入口；鼠标悬浮或点击可查看今日流量与峰值速度。默认开启。"
-              checked={draft.showTodayTrafficPopover}
-              onPatch={patch}
-            />
             <ToggleRow
               field="showConnections"
               title="显示连接数（TCP/UDP）"

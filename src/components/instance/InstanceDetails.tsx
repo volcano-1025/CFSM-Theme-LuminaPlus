@@ -1,13 +1,6 @@
 import { useEffect, type ReactNode } from "react";
-import { RefreshCw } from "lucide-react";
 import { useNodeMeta, useNodeMetrics } from "@/hooks/useNode";
-import { useMinuteClock } from "@/hooks/useClock";
-import { useTodayTrafficStats } from "@/hooks/useTodayTrafficStats";
 import { InstanceSwitcher } from "./InstanceSwitcher";
-import {
-  formatTodayPeakValue,
-  formatTodayTrafficValue,
-} from "./instanceTodayTrafficFormat";
 import {
   formatBytes,
   formatUptimeDays,
@@ -29,11 +22,8 @@ export function InstanceDetails({
   uuid: string;
   onNodeReady?: () => (() => void) | void;
 }) {
-  const now = useMinuteClock();
   const meta = useNodeMeta(uuid);
   const metrics = useNodeMetrics(uuid);
-  const trafficQuery = useTodayTrafficStats([uuid], now, "summary");
-  const todayStat = trafficQuery.data?.rows.find((row) => row.uuid === uuid);
   const isReady = Boolean(meta && metrics);
 
   useEffect(() => {
@@ -111,45 +101,9 @@ export function InstanceDetails({
             value={`↑ ${formatBytes(metrics.netUp)}/s · ↓ ${formatBytes(metrics.netDown)}/s`}
           />
           <InfoRow label={isOnline ? "最近更新" : "最后上报"} value={lastUpdated} />
-          <InfoRow
-            label={
-              <span className="instance-info-label-inline">
-                今日流量
-                <span
-                  className="instance-info-tag"
-                  title="按历史瞬时速率积分估算，非精确值——后端没有「今日累计字节」字段。数值会随后端返回的采样点波动，重新打开可能变化。"
-                >
-                  估算
-                </span>
-              </span>
-            }
-            value={
-              <span className="instance-info-inline-value">
-                <span>
-                  {formatTodayTrafficValue(
-                    todayStat,
-                    trafficQuery.isPending,
-                    trafficQuery.isError,
-                  )}
-                </span>
-                <button
-                  type="button"
-                  className={`instance-info-refresh${trafficQuery.isFetching ? " is-spinning" : ""}`}
-                  onClick={() => void trafficQuery.refetch()}
-                  disabled={trafficQuery.isFetching}
-                  aria-busy={trafficQuery.isFetching}
-                  aria-label="刷新今日流量"
-                  title="刷新今日流量"
-                >
-                  <RefreshCw size={13} strokeWidth={2.2} />
-                </button>
-              </span>
-            }
-          />
-          <InfoRow
-            label="峰值速度"
-            value={formatTodayPeakValue(todayStat, trafficQuery.isPending)}
-          />
+          {/* 「今日流量」「峰值速度」已移除：后端没有今日累计字节字段，两者只能由历史瞬时速率
+              积分/取极值得出，而历史接口每次固定只返回约 120 个点（区间越长采样越粗），
+              数值会随返回的采样点大幅漂移，误导性大于参考价值。 */}
           <div className="instance-info-item is-stack">
             <span className="instance-info-label">总流量</span>
             <div className="instance-info-traffic">

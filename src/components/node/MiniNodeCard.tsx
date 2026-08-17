@@ -15,7 +15,6 @@ import { clsx } from "clsx";
 import { Flag } from "@/components/ui/Flag";
 import { OsLogo } from "@/components/ui/OsLogo";
 import { IpStackBadges } from "./IpStackBadges";
-import { NodeTodayTrafficPopover } from "./NodeTodayTrafficPopover";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { useNodeCardModel } from "@/hooks/useNodeCardModel";
 import { speedRateColor } from "@/utils/metricTone";
@@ -39,11 +38,9 @@ type MiniTag = { label: string; color: string };
 function MiniHeader({
   node,
   osName,
-  showTodayTraffic,
 }: {
   node: MiniNode;
   osName: string;
-  showTodayTraffic: boolean;
 }) {
   const detailLabels = nodeDetailLinkLabels(node.name, osName);
   const detailHref = `/server/${encodeURIComponent(node.uuid)}`;
@@ -53,7 +50,6 @@ function MiniHeader({
       <Link to={detailHref} className="mini-node-title" title={node.name}>
         {node.name}
       </Link>
-      {showTodayTraffic && <NodeTodayTrafficPopover uuid={node.uuid} size={13} />}
       <Link
         to={detailHref}
         className="mini-node-os"
@@ -395,10 +391,8 @@ const MiniHealth = memo(function MiniHealth({
 
 export const MiniNodeCard = memo(function MiniNodeCard({
   uuid,
-  showTodayTraffic = true,
 }: {
   uuid: string;
-  showTodayTraffic?: boolean;
 }) {
   const model = useNodeCardModel(uuid, {
     pingBucketCount: HEALTH_BAR_COUNT,
@@ -431,7 +425,6 @@ export const MiniNodeCard = memo(function MiniNodeCard({
       <MiniHeader
         node={node}
         osName={osName}
-        showTodayTraffic={showTodayTraffic}
       />
       <MiniChips tags={footerTags} renewalPrice={renewalPrice} ipv4={node.ipv4} ipv6={node.ipv6} />
       <MiniVitals node={node} loadFraction={loadFraction} />

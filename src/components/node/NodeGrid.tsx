@@ -36,10 +36,8 @@ import { useHomeSort } from "@/hooks/useHomeSort";
 import { useHomeNodeOrder } from "@/hooks/useHomeNodeOrder";
 import { useHourlyClock } from "@/hooks/useClock";
 import { preloadAssetsPage } from "@/services/assetsPageLoader";
-import {
-  preloadTodayTrafficStats,
-  TodayTrafficStatsProvider,
-} from "@/hooks/useTodayTrafficStats";
+import { preloadTodayTrafficStats } from "@/hooks/useTodayTrafficStats";
+import { usePacedRate } from "@/hooks/usePacedRate";
 import { HomeSortControl } from "./HomeSortControl";
 import {
   getOverviewRating,
@@ -457,8 +455,14 @@ export function NodeGrid() {
       netDown,
     };
   }, [visibleNodes]);
+  // 「实时带宽」是跨节点求和，而各节点错开上报、每次提交只更新其中几台，
+  // 跟着每次提交重算就是「部分新+部分旧」的和，看上去乱跳。按固定节拍整体换一次。
+  const pacedNet = usePacedRate(overview.netUp, overview.netDown);
+  const displayOverview = useMemo<HomeOverview>(
+    () => ({ ...overview, netUp: pacedNet.up, netDown: pacedNet.down }),
+    [overview, pacedNet],
+  );
   const showHomeOverview = themeSettings.isReady && themeSettings.showHomeOverview;
-  const showTrafficPopover = themeSettings.isReady && themeSettings.showTodayTrafficPopover;
   const hasNodes = visibleMeta.length > 0;
   // 卡内入口与悬浮入口互斥，避免重复操作入口。
   const showAssetCard = showHomeOverview && hasNodes;
@@ -610,22 +614,19 @@ export function NodeGrid() {
               {mode === "mini" ? (
                 <MiniNodeCard
                   uuid={uuid}
-                  showTodayTraffic={showTrafficPopover}
                 />
               ) : mode === "compact" ? (
                 <CompactNodeCard
                   uuid={uuid}
-                  showTodayTraffic={showTrafficPopover}
                 />
               ) : (
                 <NodeCard
                   uuid={uuid}
-                  showTodayTraffic={showTrafficPopover}
                 />
               )}
             </div>
           )),
-    [orderedUuids, mode, showTrafficPopover],
+    [orderedUuids, mode],
   );
   const showGroupTabs =
     themeSettings.isReady && themeSettings.showGroupTabs && groupOptions.length > 0;
@@ -690,7 +691,7 @@ export function NodeGrid() {
       <HomeBrand siteName={siteName} />
       {showHomeOverview && (
         <HomeOverviewCards
-          overview={overview}
+          overview={displayOverview}
           dense={mode === "mini" || mode === "list"}
           showDetailButton={showCostDetailButton}
           renewalNodes={renewalNodes}
@@ -745,15 +746,7 @@ export function NodeGrid() {
           onSelectRegion={setSelectedRegion}
         />
       )}
-      {isList ? (
-        <NodeListView uuids={orderedUuids} />
-      ) : showTrafficPopover ? (
-        <TodayTrafficStatsProvider uuids={trafficUuids}>
-          {gridElement}
-        </TodayTrafficStatsProvider>
-      ) : (
-        gridElement
-      )}
+      {isList ? <NodeListView uuids={orderedUuids} /> : gridElement}
     </>
   );
 }

@@ -402,7 +402,6 @@ export interface ThemeSettings {
   compactShowBilling?: boolean;
   compactShowUptime?: boolean;
   showConnections?: boolean;
-  showTodayTrafficPopover?: boolean;
   hiddenNodes?: string[];
   costIgnoredNodes?: string[];
   // 值支持旧版纯数字(自动升格)或 { amount, paidCny?, acquiredAt? } 条目,见 normalizeCostPremiums。
