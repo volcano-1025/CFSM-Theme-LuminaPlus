@@ -86,6 +86,45 @@ describe("summarizeTodayTrafficRecords", () => {
     expect(stat.trafficUp).toBe(600_000_000);
   });
 
+  it("integrates adjacent in-range samples trapezoidally (averages the two speeds)", () => {
+    // 相邻两点速率不同：2 MB/s → 0，梯形取均值 1 MB/s × 60s = 60 MB；
+    // 旧的矩形口径（取当前点速率）会算成 0×60 = 0。
+    const stat = summarizeTodayTrafficRecords(
+      "node-a",
+      [
+        record("2026-07-16T00:00:00Z", { net_out: 2_000_000 }),
+        record("2026-07-16T00:01:00Z", { net_out: 0 }),
+      ],
+      DAY_START,
+      DAY_END,
+    );
+
+    expect(stat.trafficUp).toBe(60_000_000);
+    expect(stat.peakUp).toBe(2_000_000);
+  });
+
+  it("clamps a lone outlier spike in the total but keeps the raw peak", () => {
+    // 五个 1 MB/s + 一个 50 MB/s 毛刺：中位数 1 MB/s、上界 10 MB/s，毛刺按 10 MB/s 计入总量。
+    // 前四段各 60 MB；末段梯形 (1 + 10)/2 × 60s = 330 MB；合计 570 MB。峰值仍报真实的 50 MB/s。
+    const stat = summarizeTodayTrafficRecords(
+      "node-a",
+      [
+        record("2026-07-16T00:00:00Z", { net_out: 1_000_000 }),
+        record("2026-07-16T00:01:00Z", { net_out: 1_000_000 }),
+        record("2026-07-16T00:02:00Z", { net_out: 1_000_000 }),
+        record("2026-07-16T00:03:00Z", { net_out: 1_000_000 }),
+        record("2026-07-16T00:04:00Z", { net_out: 1_000_000 }),
+        record("2026-07-16T00:05:00Z", { net_out: 50_000_000 }),
+      ],
+      DAY_START,
+      DAY_END,
+    );
+
+    expect(stat.trafficUp).toBe(570_000_000);
+    expect(stat.peakUp).toBe(50_000_000);
+    expect(stat.peakUpAt).toBe(Date.parse("2026-07-16T00:05:00Z"));
+  });
+
   it("keeps the timestamp of each direction peak", () => {
     const stat = summarizeTodayTrafficRecords(
       "node-a",

@@ -1102,6 +1102,25 @@ body::after {
   word-break: break-word;
 }
 
+.instance-info-label-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 「估算」等小角标：弱化的胶囊，提示该值非精确数据（如今日流量按瞬时速率积分得出）。 */
+.instance-info-tag {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--surface-muted, rgba(127, 127, 127, 0.14));
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: help;
+}
+
 .instance-info-inline-value {
   display: inline-flex;
   min-width: 0;

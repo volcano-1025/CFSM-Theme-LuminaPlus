@@ -112,7 +112,17 @@ export function InstanceDetails({
           />
           <InfoRow label={isOnline ? "最近更新" : "最后上报"} value={lastUpdated} />
           <InfoRow
-            label="今日流量"
+            label={
+              <span className="instance-info-label-inline">
+                今日流量
+                <span
+                  className="instance-info-tag"
+                  title="按历史瞬时速率积分估算，非精确值——后端没有「今日累计字节」字段。数值会随后端返回的采样点波动，重新打开可能变化。"
+                >
+                  估算
+                </span>
+              </span>
+            }
             value={
               <span className="instance-info-inline-value">
                 <span>
@@ -169,7 +179,7 @@ function InfoRow({
   label,
   value,
 }: {
-  label: string;
+  label: ReactNode;
   value: ReactNode;
 }) {
   return (
