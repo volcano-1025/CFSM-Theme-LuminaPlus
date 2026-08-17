@@ -1116,19 +1116,26 @@ export function getHomeNodeSummariesSnapshot(): HomeNodeSummary[] {
       const meta = state.metaByUuid[uuid];
       if (!meta) return null;
       const metrics = state.metricsByUuid[uuid];
+      const online = metrics?.online ?? null;
+      // 掉线节点的瞬时速率不清零（后端 /api/servers 掉线后仍沿用最后一个快照），
+      // 但「实时带宽」总览、带宽评级与带宽排序都是当下口径：节点不再上报就按 0 计，
+      // 和实时流量迷你图（updateTrafficTrendSeries 掉线即清空）保持一致，否则一台
+      // 死节点会把最后一刻的带宽一直算进总量。累计流量另说，见下。
+      const realtimeNetUp = online === false ? 0 : metrics?.netUp ?? 0;
+      const realtimeNetDown = online === false ? 0 : metrics?.netDown ?? 0;
       return {
         uuid,
         group: String(meta.group || "").trim(),
         region: String(meta.region || "").trim(),
         hidden: meta.hidden,
         weight: meta.weight,
-        online: metrics?.online ?? null,
+        online,
         // 首页总览与排序看的是"累计流量"，用探针生命周期的总量；
         // 按周期重置的配额进度另用 trafficUpMonthly / trafficDownMonthly。
         trafficUp: metrics?.trafficUp ?? 0,
         trafficDown: metrics?.trafficDown ?? 0,
-        netUp: metrics?.netUp ?? 0,
-        netDown: metrics?.netDown ?? 0,
+        netUp: realtimeNetUp,
+        netDown: realtimeNetDown,
       };
     })
     .filter((item): item is HomeNodeSummary => Boolean(item));

@@ -1,7 +1,7 @@
 {
   "name": "cfsm-theme-luminaplus",
   "private": true,
-  "version": "1.2.4",
+  "version": "1.2.5",
   "type": "module",
   "description": "CF-Server-Monitor theme, ported from Komari-Theme-LuminaPlus",
   "author": "codex&shark&shanyang",

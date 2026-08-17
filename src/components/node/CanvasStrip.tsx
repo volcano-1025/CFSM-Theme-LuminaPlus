@@ -457,9 +457,19 @@ export function CanvasStrip({
 
     const unsubscribeWidth = subscribeToWidth(canvas, updateWidth);
     const unsubscribeVisibility = subscribeToVisibility(canvas, setVisible);
-    // 仅旧浏览器的 observer 回退需要主动测量；现代浏览器的首帧不被同步布局读取阻塞。
-    if (typeof ResizeObserver === "undefined") {
-      updateWidth(normalizeWidth(canvas.getBoundingClientRect().width));
+    // 首帧同步补一次测量。宽度与可见性平时都靠 ResizeObserver / IntersectionObserver 的
+    // 异步首帧回调，可数据已就绪时它们尚未派发，会留下一帧空白柱，且偶发不自愈——表现为
+    // 刚打开首页时部分卡片的延迟/丢包柱缺失、要刷新才回来。这里同步量一次宽度，并对已落在
+    // 视口内（含与 IntersectionObserver 一致的 160px 预载边距）的卡片直接置为可见，让首帧
+    // 就能画出来；之后仍交回两个 observer 接管（滚走后照常懒渲染）。读发生在 effect 内、
+    // 与画布尺寸写入不穿插，只触发一次 reflow。
+    const rect = canvas.getBoundingClientRect();
+    updateWidth(normalizeWidth(rect.width));
+    if (typeof IntersectionObserver !== "undefined") {
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      if (rect.bottom >= -160 && rect.top <= viewportHeight + 160) {
+        setVisible(true);
+      }
     }
     return () => {
       unsubscribeWidth();
