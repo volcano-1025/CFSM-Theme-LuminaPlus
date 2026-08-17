@@ -99,8 +99,11 @@ const SERVERS_REQUEST_TIMEOUT_MS = 8_000;
  */
 const WS_COALESCE_MIN_MS = 120;
 const WS_COALESCE_MAX_MS = 2_000;
-/** 还没测出上报间隔前的兜底窗口。 */
-const WS_COALESCE_DEFAULT_MS = 250;
+/**
+ * 还没测出上报间隔前的兜底窗口。取偏大值：刚连上时后端会补发快照/追帧，此时 EMA 尚未收敛，
+ * 窗口太小会把那一小段合不住、"马上跳几组"。测出真实间隔后立即用实测值，不受此影响。
+ */
+const WS_COALESCE_DEFAULT_MS = 1_000;
 /** 数据量项：每秒最多渲染这么多"节点次"，据此给窗口设下限（节点数 ÷ 该值）。 */
 const WS_COALESCE_NODE_RENDERS_PER_SEC = 200;
 /** 上报间隔 EMA 的平滑系数（新样本权重）。 */
@@ -738,6 +741,28 @@ let wsLastFlushAt = 0;
 let wsReportIntervalEmaMs = 0;
 const wsLastTsByServer = new Map<string, number>();
 
+/**
+ * 诊断开关：URL 带 `?wsdebug=1` 时，把每次合流的实测上报间隔 / 窗口 / 合并条数 / 距上次时长
+ * 打到控制台。用来判断"每 2 秒才跳一次"到底是前端真的每 2 秒才收到数据（合到 2s 是对的），
+ * 还是收得更快但窗口算大了把更新并掉了（需调小）。本地无 WSS，只能靠线上这份输出校准。
+ */
+const WS_DEBUG =
+  typeof location !== "undefined" && /[?&]wsdebug=1(?:&|$)/.test(location.search);
+let wsDebugFlushes = 0;
+let wsDebugSamplesTotal = 0;
+
+/** 供控制台随时读取当前合流状态：`window`/`import` 皆可，配合 `?wsdebug=1` 使用。 */
+export function getWsCoalesceStats() {
+  return {
+    reportIntervalEmaMs: Math.round(wsReportIntervalEmaMs),
+    windowMs: resolveWsFlushWindowMs(wsReportIntervalEmaMs, state.order.length),
+    serverCount: state.order.length,
+    pending: wsPendingSamples.length,
+    flushes: wsDebugFlushes,
+    samplesTotal: wsDebugSamplesTotal,
+  };
+}
+
 /** 从样本 ts 的相邻差实测每台节点的上报间隔，喂进 EMA（ts 统一归一化成毫秒）。 */
 function observeReportInterval(samples: WsSample[]): void {
   for (const sample of samples) {
@@ -761,10 +786,22 @@ function flushWsSampleBuffer(): void {
     window.clearTimeout(wsFlushTimer);
     wsFlushTimer = null;
   }
-  wsLastFlushAt = Date.now();
+  const now = Date.now();
+  const gapSinceLastMs = wsLastFlushAt > 0 ? now - wsLastFlushAt : 0;
+  wsLastFlushAt = now;
   if (wsPendingSamples.length === 0) return;
   const batch = wsPendingSamples;
   wsPendingSamples = [];
+  if (WS_DEBUG) {
+    wsDebugFlushes += 1;
+    // 合并条数≈1 且距上次≈窗口 ⇒ 前端真的这么慢，合对了；合并条数>1 ⇒ 收得比窗口快、在被并掉。
+    console.info(
+      `[LuminaPlus WS] flush#${wsDebugFlushes} 合并${batch.length}条 · ` +
+        `距上次${gapSinceLastMs}ms · 实测间隔EMA ${Math.round(wsReportIntervalEmaMs)}ms · ` +
+        `窗口${resolveWsFlushWindowMs(wsReportIntervalEmaMs, state.order.length)}ms · ` +
+        `节点${state.order.length}`,
+    );
+  }
   applyWsSamples(batch);
 }
 
@@ -774,6 +811,7 @@ function flushWsSampleBuffer(): void {
  */
 function enqueueWsSamples(samples: WsSample[]): void {
   if (samples.length === 0) return;
+  if (WS_DEBUG) wsDebugSamplesTotal += samples.length;
   observeReportInterval(samples);
   for (const sample of samples) wsPendingSamples.push(sample);
 
@@ -795,6 +833,8 @@ function resetWsCoalesceState(): void {
   wsLastFlushAt = 0;
   wsReportIntervalEmaMs = 0;
   wsLastTsByServer.clear();
+  wsDebugFlushes = 0;
+  wsDebugSamplesTotal = 0;
 }
 
 /** 实时样本落到已知节点上；未知节点等下一次全量刷新再出现。 */

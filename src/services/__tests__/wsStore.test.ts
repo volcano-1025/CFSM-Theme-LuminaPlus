@@ -44,8 +44,8 @@ describe("resolveTrafficTotal", () => {
 
 describe("resolveWsFlushWindowMs", () => {
   it("falls back to the default window before an interval is measured", () => {
-    // 间隔未知（0）+ 节点少：用默认 250ms。
-    expect(resolveWsFlushWindowMs(0, 5)).toBe(250);
+    // 间隔未知（0）+ 节点少：用偏大的默认窗口，压住刚连上时的快照/追帧突刺。
+    expect(resolveWsFlushWindowMs(0, 5)).toBe(1_000);
   });
 
   it("tracks the measured report interval when volume is light", () => {
