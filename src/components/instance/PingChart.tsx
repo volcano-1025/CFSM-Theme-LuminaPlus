@@ -316,8 +316,10 @@ export function PingChart({
     if (!times?.length) return null;
     return historyCoverageLabel(coverageMeta, times[0], times[times.length - 1]);
   }, [chart, coverageMeta]);
-  // 后端每次查询固定只返回约 120 个点，区间越长采样越粗（1 小时约 30 秒一个，1 天约 12 分钟
-  // 一个）。把分辨率写出来，读者才明白为什么同一段丢包在短区间看得到、长区间就没了。
+  // 查询超过 1 小时时，后端按后台设置的采样点数返回（「查询超过 1 小时时返回的采样点数」，
+  // 可选 60/120/180/240）。点数固定而区间不固定，于是区间越长采样越粗 —— 240 点时 12 小时
+  // 约 3 分钟一个、1 天约 6 分钟一个。把实际分辨率写出来，读者才明白为什么同一段短促丢包
+  // 在短区间看得到、长区间就没了。
   const samplingLabel = useMemo(() => {
     if (sortedRecords.length < 2) return null;
     const seconds = detectTypicalIntervalSeconds(
@@ -561,7 +563,7 @@ export function PingChart({
           label="丢包色带"
           active={showLoss}
           onToggle={() => setShowLoss((value) => !value)}
-          title="在图表上方按线路显示丢包率色带：越红丢得越多，空缺表示该时段没有采样。不受削峰平滑影响。注意：后端每次查询固定只返回约 120 个采样点，区间越长采样越粗（1 天约 12 分钟一个），持续一两分钟的短促丢包可能整段没被采到 —— 同一次丢包在 1 小时图里看得见、在 1 天图里消失属于此原因。"
+          title="在图表上方按线路显示丢包率色带：越红丢得越多，空缺表示该时段没有采样。不受削峰平滑影响。注意：查询超过 1 小时时，后端按后台设置的采样点数返回（可选 60/120/180/240），点数固定而区间不固定，所以区间越长采样越粗；持续一两分钟的短促丢包可能整段没被采到 —— 同一次丢包在 1 小时图里看得见、在 1 天图里消失就是这个原因，调大后台的采样点数可缓解。"
         />
         <SwitchToggle
           label="削峰平滑"
