@@ -107,10 +107,7 @@ const WS_RELEASE_MAX_MS = 3_000;
 const WS_ARRIVAL_GAP_DEFAULT_MS = 1_000;
 /** 每台节点最多排队多少帧；超了丢最老的，避免显示越拖越旧。 */
 const WS_MAX_QUEUE_PER_SERVER = 8;
-/** 只采信这个区间内的到达间隔：小于下限算同一次到达内的错开，大于上限算重连/长静默。 */
-const WS_ARRIVAL_GAP_MIN_MS = 300;
 const WS_ARRIVAL_GAP_MAX_MS = 15_000;
-const WS_ARRIVAL_ALPHA = 0.25;
 
 const SCROLL_IDLE_DELAY_MS = 160;
 const TRAFFIC_TREND_SAMPLE_COUNT = 18;
@@ -738,15 +735,16 @@ async function performServersSync() {
 /* ------------------------------------------------------------------ *
  * WebSocket 推送合流缓冲
  * ------------------------------------------------------------------ */
-/** 每台节点的待放队列与它自己的到达节奏。 */
+/** 每台节点的待放队列与它自己的出帧节奏。 */
 interface PendingNode {
   queue: WsSample[];
-  /** 该节点两次到达的间隔 EMA（毫秒）。 */
-  arrivalEmaMs: number;
-  lastArrivalAt: number;
-  /** 下一帧该在什么时刻放出。 */
+  /** 最近若干帧的到达时刻，用来实测这台节点"平均多久出一帧"。 */
+  arrivals: number[];
+  /** 下一帧该在什么时刻放出（按固定间隔对齐到网格）。 */
   nextDueAt: number;
 }
+/** 实测出帧速率的滑动窗口长度：够长才能抹平"一次到达带来多帧"的成簇效应。 */
+const WS_RATE_WINDOW = 12;
 const wsPendingByServer = new Map<string, PendingNode>();
 let wsTickTimer: number | null = null;
 /** 细粒度轮询：到点的节点在同一拍里合成一次提交，避免每台各自触发渲染。 */
@@ -762,10 +760,10 @@ let wsDebugLastCommitAt = 0;
 
 /** 供控制台随时读取当前节奏，配合 `?wsdebug=1` 使用。 */
 export function getWsPlaybackStats() {
-  const nodes: Record<string, { 到达间隔: number; 待放: number }> = {};
+  const nodes: Record<string, { 出帧间隔: number; 待放: number }> = {};
   for (const [serverId, pending] of wsPendingByServer) {
     nodes[serverId.slice(0, 8)] = {
-      到达间隔: Math.round(pending.arrivalEmaMs),
+      出帧间隔: Math.round(resolveWsNodeIntervalMs(pending.arrivals)),
       待放: pending.queue.length,
     };
   }
@@ -773,21 +771,27 @@ export function getWsPlaybackStats() {
 }
 
 /**
- * 某节点放完一帧后，下一帧该隔多久。
+ * 某节点的出帧间隔 = 它**平均多久到一帧**（用最近若干帧的到达时刻实测）。
  *
- * 目标：**这台节点上报多快，就显示多快，且匀速**。一次到达带来的若干帧，要在下一次到达前
- * 均匀铺完 —— 队列里还剩 N 帧，就把「到下次到达的时间」切成 N+1 份。
- * 于是 2 秒来 2 帧就是 1 秒一帧、2 秒来 1 帧就是 2 秒一帧，各节点各按各的节奏，互不影响。
+ * 目标：**这台节点上报多快就显示多快，且匀速**。关键是取「平均速率」而不是「当前队列深度」——
+ * 后者会让一次到达带来多帧的节点走成 1000→2000→1000→667 的循环：队列放空后要干等一整个
+ * 到达间隔，下一批又挤在一起。按平均速率定一个固定间隔，2 秒来 2 帧就恒定 1 秒一帧、
+ * 10 秒来 3 帧就恒定 3.3 秒一帧，各节点各按各的，互不影响。
+ *
+ * `arrivals` 是升序的到达时刻；不足两个时用兜底值。
  */
-export function resolveWsNodeIntervalMs(
-  arrivalEmaMs: number,
-  remainingFrames: number,
-): number {
-  const arrival = arrivalEmaMs > 0 ? arrivalEmaMs : WS_ARRIVAL_GAP_DEFAULT_MS;
-  return Math.min(
-    WS_RELEASE_MAX_MS,
-    Math.max(WS_RELEASE_MIN_MS, arrival / Math.max(1, remainingFrames + 1)),
-  );
+export function resolveWsNodeIntervalMs(arrivals: readonly number[]): number {
+  if (arrivals.length < 2) return WS_ARRIVAL_GAP_DEFAULT_MS;
+  const first = arrivals[0]!;
+  const span = arrivals[arrivals.length - 1]! - first;
+  // 分母取「第一帧之后到达的帧数」而不是 length-1：成簇到达时同一时刻有多帧，
+  // 用 length-1 会把间隔算小（12 帧跨 10 秒会得 909ms 而非 1000ms），放帧比到达快就会慢慢积压。
+  let framesAfterFirst = 0;
+  for (const time of arrivals) if (time > first) framesAfterFirst += 1;
+  if (framesAfterFirst === 0) return WS_ARRIVAL_GAP_DEFAULT_MS;
+  const interval = span / framesAfterFirst;
+  if (!Number.isFinite(interval) || interval <= 0) return WS_ARRIVAL_GAP_DEFAULT_MS;
+  return Math.min(WS_RELEASE_MAX_MS, Math.max(WS_RELEASE_MIN_MS, interval));
 }
 
 function scheduleWsTick(): void {
@@ -805,10 +809,13 @@ function runWsTick(): void {
   for (const [serverId, pending] of wsPendingByServer) {
     if (pending.queue.length > 0 && now >= pending.nextDueAt) {
       batch.push(pending.queue.shift()!);
+      // 对齐到固定网格：从上一次应放的时刻推进一个间隔，而不是从"现在"重算，
+      // 这样连续出帧的间隔恒等于该节点的平均出帧间隔。落后太多（如标签页被节流）时从现在追平。
       pending.nextDueAt =
-        now + resolveWsNodeIntervalMs(pending.arrivalEmaMs, pending.queue.length);
+        Math.max(now, pending.nextDueAt) + resolveWsNodeIntervalMs(pending.arrivals);
     }
-    if (pending.queue.length === 0 && now - pending.lastArrivalAt > WS_ARRIVAL_GAP_MAX_MS) {
+    const lastArrivalAt = pending.arrivals[pending.arrivals.length - 1] ?? 0;
+    if (pending.queue.length === 0 && now - lastArrivalAt > WS_ARRIVAL_GAP_MAX_MS) {
       wsPendingByServer.delete(serverId);
       continue;
     }
@@ -838,7 +845,6 @@ function runWsTick(): void {
 function enqueueWsSamples(samples: WsSample[]): void {
   if (samples.length === 0) return;
   const now = Date.now();
-  const arrivedServers = new Set<string>();
 
   for (const sample of samples) {
     const serverId = sample.serverId;
@@ -849,21 +855,8 @@ function enqueueWsSamples(samples: WsSample[]): void {
 
     let pending = wsPendingByServer.get(serverId);
     if (!pending) {
-      pending = { queue: [], arrivalEmaMs: 0, lastArrivalAt: 0, nextDueAt: 0 };
+      pending = { queue: [], arrivals: [], nextDueAt: 0 };
       wsPendingByServer.set(serverId, pending);
-    }
-
-    // 到达节奏按节点各自统计（同一批里同一台只记一次）。
-    if (!arrivedServers.has(serverId)) {
-      arrivedServers.add(serverId);
-      const gap = pending.lastArrivalAt > 0 ? now - pending.lastArrivalAt : 0;
-      if (gap >= WS_ARRIVAL_GAP_MIN_MS && gap <= WS_ARRIVAL_GAP_MAX_MS) {
-        pending.arrivalEmaMs =
-          pending.arrivalEmaMs === 0
-            ? gap
-            : pending.arrivalEmaMs * (1 - WS_ARRIVAL_ALPHA) + gap * WS_ARRIVAL_ALPHA;
-      }
-      pending.lastArrivalAt = now;
     }
 
     const lastQueuedTs =
@@ -872,6 +865,12 @@ function enqueueWsSamples(samples: WsSample[]): void {
         : 0;
     if (ts > 0 && ts === lastQueuedTs) continue;
     pending.queue.push(sample);
+    // 每帧都记一次到达时刻：一次到达带来多帧时它们时间相同，滑动窗口据此算出的
+    // 平均间隔自然把成簇效应摊平（10 秒来 3 帧 → 平均 3.3 秒一帧）。
+    pending.arrivals.push(now);
+    if (pending.arrivals.length > WS_RATE_WINDOW) {
+      pending.arrivals.splice(0, pending.arrivals.length - WS_RATE_WINDOW);
+    }
     // 积压过多（补发一大段历史）时丢最老的，避免显示越拖越旧。
     if (pending.queue.length > WS_MAX_QUEUE_PER_SERVER) {
       pending.queue.splice(0, pending.queue.length - WS_MAX_QUEUE_PER_SERVER);

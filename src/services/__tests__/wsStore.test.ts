@@ -43,31 +43,46 @@ describe("resolveTrafficTotal", () => {
 });
 
 describe("resolveWsNodeIntervalMs", () => {
-  it("shows one frame per arrival when a node sends one at a time", () => {
-    // 2 秒来 1 帧：放完队列就空 → 下一帧在 2 秒后，即 2 秒更新一次。
-    expect(resolveWsNodeIntervalMs(2_000, 0)).toBe(2_000);
+  /** 造一串到达时刻：每 gap 毫秒到一次，每次到 frames 帧（同一时刻）。 */
+  const arrivals = (gap: number, frames: number, bursts: number) => {
+    const out: number[] = [];
+    for (let i = 0; i < bursts; i += 1) {
+      for (let f = 0; f < frames; f += 1) out.push(i * gap);
+    }
+    return out;
+  };
+
+  it("matches the arrival gap when a node sends one frame at a time", () => {
+    // 2 秒来 1 帧 → 2 秒显示一帧。
+    expect(resolveWsNodeIntervalMs(arrivals(2_000, 1, 6))).toBe(2_000);
   });
 
-  it("splits the arrival gap when a node sends two frames at once", () => {
-    // 2 秒来 2 帧：放掉一帧还剩一帧 → 1 秒后放第二帧，正好在下次到达前铺完。
-    expect(resolveWsNodeIntervalMs(2_000, 1)).toBe(1_000);
+  it("halves the interval when a node sends two frames per arrival", () => {
+    // 2 秒来 2 帧 → 恒定 1 秒一帧（关键：不随队列深度忽快忽慢）。
+    expect(resolveWsNodeIntervalMs(arrivals(2_000, 2, 6))).toBe(1_000);
   });
 
-  it("paces a faster node by its own cadence, independent of others", () => {
-    // 约 1.1 秒来 1 帧的节点按自己的节奏走，不被别人的 2 秒拖慢。
-    expect(resolveWsNodeIntervalMs(1_100, 0)).toBe(1_100);
+  it("spreads a batched slow node evenly", () => {
+    // 6 秒来 3 帧 → 恒定 2 秒一帧，而不是"挤着放完再干等"。
+    expect(resolveWsNodeIntervalMs(arrivals(6_000, 3, 5))).toBe(2_000);
   });
 
-  it("spreads a burst of frames evenly across the arrival gap", () => {
-    expect(resolveWsNodeIntervalMs(4_000, 3)).toBe(1_000);
+  it("counts frames after the first timestamp so bursts are not overcounted", () => {
+    // 成簇到达时同一时刻有多帧；若用 length-1 作分母会算成 909ms，放帧比到达快就会积压。
+    expect(resolveWsNodeIntervalMs(arrivals(2_000, 2, 6))).toBe(1_000);
   });
 
-  it("falls back to the default cadence before one is measured", () => {
-    expect(resolveWsNodeIntervalMs(0, 0)).toBe(1_000);
+  it("paces a faster node by its own rate, independent of others", () => {
+    expect(resolveWsNodeIntervalMs(arrivals(1_100, 1, 8))).toBe(1_100);
+  });
+
+  it("falls back to the default before a rate can be measured", () => {
+    expect(resolveWsNodeIntervalMs([])).toBe(1_000);
+    expect(resolveWsNodeIntervalMs([123])).toBe(1_000);
   });
 
   it("clamps so playback never storms or stalls", () => {
-    expect(resolveWsNodeIntervalMs(1_000, 20)).toBe(200);
-    expect(resolveWsNodeIntervalMs(15_000, 0)).toBe(3_000);
+    expect(resolveWsNodeIntervalMs([0, 50])).toBe(200);
+    expect(resolveWsNodeIntervalMs([0, 60_000])).toBe(3_000);
   });
 });
