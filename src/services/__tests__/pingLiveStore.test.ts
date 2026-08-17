@@ -220,6 +220,27 @@ describe("seedPingHistory", () => {
     expect(samples.at(-1)?.ping.ct).toBe(42);
   });
 
+  it("keeps full-hour coverage when dense live samples would overflow the cap", () => {
+    // 线上实测的状态：WSS 下本地约 20 秒攒一个，很快顶满上限却只覆盖最近约半小时；
+    // 若超限时直接砍最老的，就会把后端窗口里较早的点整段丢掉 —— 柱子左半段空、右半段有。
+    // 90 个点、20 秒一个，正好覆盖最近 30 分钟（未触及上限，触发点在合并之后）。
+    for (let index = 0; index < 90; index += 1) {
+      recordPingSample(
+        "node-a",
+        NOW - 30 * 60_000 + index * 20_000,
+        ping({ ct: 40 + (index % 5) }),
+      );
+    }
+    seedPingHistory("node-a", backendWindow());
+
+    const samples = getPingHistorySnapshot("node-a");
+    const oldestAgoMin = (NOW - samples[0]!.time) / 60_000;
+    // 仍然覆盖接近整小时，而不是只剩最近半小时。
+    expect(oldestAgoMin).toBeGreaterThan(55);
+    // 前半小时（窗口独有的那段）必须还有点。
+    expect(samples.filter((s) => s.time < NOW - 30 * 60_000).length).toBeGreaterThan(10);
+  });
+
   it("does not notify subscribers when the window is unchanged", () => {
     seedPingHistory("node-a", backendWindow());
     const listener = vi.fn();

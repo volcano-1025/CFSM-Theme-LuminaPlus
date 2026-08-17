@@ -38,8 +38,8 @@ const MIN_SAMPLE_GAP_MS = 50_000;
 const MIN_CHANGED_SAMPLE_GAP_MS = 20_000;
 /** 50 秒一个样本时，96 条覆盖 80 分钟，足够铺满一小时的图表。 */
 const MAX_SAMPLES_PER_NODE = 96;
-/** 持久化保留同样的条数，这样一小时内回来能直接接上完整图表。 */
-const MAX_PERSISTED_SAMPLES = 96;
+/** 抽稀后相邻样本的最小间隔：一小时铺满上限条数，保证覆盖整段窗口。 */
+const MIN_THINNED_GAP_MS = (60 * 60 * 1000) / MAX_SAMPLES_PER_NODE;
 const MAX_PERSISTED_NODES = 100;
 const SAMPLE_TTL_MS = 60 * 60 * 1000;
 const STORAGE_KEY = "cfsm-luminaplus:ping-live:v1";
@@ -60,6 +60,30 @@ function hasAnyValue(ping: CarrierPingSnapshot): boolean {
 
 function isFresh(sample: PingLiveSample, now: number): boolean {
   return sample.time > 0 && now - sample.time <= SAMPLE_TTL_MS;
+}
+
+/**
+ * 超出条数上限时按时间**均匀抽稀**，而不是砍掉最老的那些。
+ *
+ * 缓冲区里两种样本疏密差很多：后端窗口是 2 分钟一个、覆盖整小时，本地累积约 20 秒一个、
+ * 只覆盖最近半小时。直接 `slice(-N)` 会被密集的近期样本占满，把窗口里较早的点整段丢掉 ——
+ * 首页柱子于是左半段（较早）空、右半段有。这里从最新往回留，相邻保留点至少隔
+ * {@link MIN_THINNED_GAP_MS}，于是无论哪种疏密都能铺满整小时。
+ */
+function thinSamples(samples: readonly PingLiveSample[]): PingLiveSample[] {
+  if (samples.length <= MAX_SAMPLES_PER_NODE) return [...samples];
+
+  const kept: PingLiveSample[] = [];
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    const sample = samples[index]!;
+    const last = kept[kept.length - 1];
+    if (!last || last.time - sample.time >= MIN_THINNED_GAP_MS) kept.push(sample);
+  }
+  kept.reverse();
+  // 抽稀后仍超上限（样本比一小时还密时）才退回保留最新的那批。
+  return kept.length > MAX_SAMPLES_PER_NODE
+    ? kept.slice(-MAX_SAMPLES_PER_NODE)
+    : kept;
 }
 
 function samePing(a: CarrierPingSnapshot, b: CarrierPingSnapshot): boolean {
@@ -168,7 +192,7 @@ function persistNow(): void {
       if (count >= MAX_PERSISTED_NODES) break;
       const fresh = samples.filter((sample) => isFresh(sample, now));
       if (fresh.length === 0) continue;
-      nodes[uuid] = fresh.slice(-MAX_PERSISTED_SAMPLES).map(toPersisted);
+      nodes[uuid] = thinSamples(fresh).map(toPersisted);
       count += 1;
     }
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 1, savedAt: now, nodes }));
@@ -233,10 +257,7 @@ export function recordPingSample(
 
   const now = Date.now();
   const next = [...previous.filter((sample) => isFresh(sample, now)), { time, ping }];
-  samplesByUuid.set(
-    uuid,
-    next.length > MAX_SAMPLES_PER_NODE ? next.slice(-MAX_SAMPLES_PER_NODE) : next,
-  );
+  samplesByUuid.set(uuid, thinSamples(next));
   emit(uuid);
   schedulePersist();
 }
@@ -279,10 +300,7 @@ export function seedPingHistory(
   // 后端权威：同一时间戳覆盖本地那份。
   for (const sample of fresh) byTime.set(sample.time, sample);
   const merged = [...byTime.values()].sort((left, right) => left.time - right.time);
-  const next =
-    merged.length > MAX_SAMPLES_PER_NODE
-      ? merged.slice(-MAX_SAMPLES_PER_NODE)
-      : merged;
+  const next = thinSamples(merged);
 
   // 后端窗口每次刷新基本原样返回，内容没变就不要惊动订阅者。
   if (sameSeries(local, next)) return;
