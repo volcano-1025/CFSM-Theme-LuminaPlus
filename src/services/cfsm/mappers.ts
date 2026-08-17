@@ -224,8 +224,6 @@ export function toNodeInfo(server: CfsmServer): NodeInfo {
     cpu_name: server.cpu_info,
     cpu_cores: server.cpu_cores,
     arch: server.arch,
-    // CF-Server-Monitor 不上报虚拟化类型。
-    virtualization: "",
     os: server.os,
     kernel_version: server.kernel_version,
     gpu_name: gpuDisplayName(gpus),

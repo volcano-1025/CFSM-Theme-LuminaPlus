@@ -282,7 +282,6 @@ export interface NodeInfo {
   cpu_name: string;
   cpu_cores: number;
   arch: string;
-  virtualization: string;
   os: string;
   kernel_version: string;
   gpu_name: string;

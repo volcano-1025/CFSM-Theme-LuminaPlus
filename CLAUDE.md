@@ -23,6 +23,8 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 - `src/services/cfsm/` — 后端适配层：`config.ts`(apiBase/凭证)、`http.ts`、`mappers.ts`、`wsClient.ts`
 - `src/services/api.ts` / `wsStore.ts` / `pingLiveStore.ts` — 查询函数、节点状态 store、首页延迟缓冲区
 - `src/hooks/usePingOverview.ts` — 首页延迟/丢包柱状图的取数与分桶
+- `docs/*.png` — 提交 CFSM-Theme-Store 用的封面与截图，代码里没有任何地方引用，别当垃圾删掉
+  （目前还是 v1.1.x 时期的界面，重做要跑无头浏览器截真实产物）
 - 注释写“为什么”，中文；改数据层前先看 README 的「与 Komari 版的差异」，那里记着后端能力边界
 
 ## 硬约束（违反会出事）
@@ -72,5 +74,9 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-v1.2.4 已发布并在主题商店上架（`dist` = 产物分支）。下一步没有排期的功能，
-以线上反馈的修复为主。
+v1.2.4 已发布，`dist` 头是产物提交 `35d6770`（2026-08-17）。主题商店里的版本登记由站长
+自己更新，代码这边推完 `main` 就算完。
+
+待确认：v1.2.4 的「Ping 图表辅助线支持触屏拖动」只在单测和桌面端验过（坐标换算 + 色带竖线
+跟随），真机触感还没人试过 —— 用户反馈说不跟手就先查 `.u-over` 的 `touch-action`。
+其余没有排期的功能，以线上反馈的修复为主。
