@@ -90,20 +90,22 @@ const SERVERS_REQUEST_TIMEOUT_MS = 8_000;
  * WebSocket 推送回放（按到达节奏匀速铺开）
  * ------------------------------------------------------------------ */
 /**
- * 后端会按"有没有人在看"调整上报频率，一次推来的样本数因此不固定（实测：活跃节点约 2 秒一条；
- * 慢节点会把攒下的几帧一次性补发）。目标是**不论几秒推几个，看起来都匀速**：
- * 一批 N 个、每 T 毫秒来一批，就每 T/N 毫秒放一个。
+ * 后端会按"有没有人在看"调整上报频率，一次推来的样本数因此不固定（实测：活跃节点约 2 秒一条，
+ * 但各节点错开到达，全局看约 1 秒来一簇；慢节点会把攒下的几帧一次性补发）。
  *
- * 节奏取自**实际到达时间**间隔，而不是样本自带的 ts —— 补发的历史帧 ts 相隔十几秒却同时到达，
- * 拿 ts 算会把节奏算成十几秒、越积越多（上一版正是栽在这里）。队列深度参与分母，
- * 于是积压时自动加快、追平后自动回落，不会越拖越久。
+ * 目标是**不论几秒推几个，看起来都匀速**。做法是一个**固定节拍器**：节拍取自实测的「到达簇间隔」
+ * （相邻两簇到达的时间差，簇内几十毫秒的错开不计），每拍从各节点队列放出一帧。
+ * 节拍稳定 ⇒ 观感匀速；由数据实测而来 ⇒ 后端调频率时自动跟随。
+ *
+ * 节奏必须按**实际到达时间**测，不能用样本自带的 ts —— 补发的历史帧 ts 相隔十几秒却同时到达，
+ * 拿 ts 算会把节奏算成十几秒、越积越多（栽过一次）。队列积压时按深度加快，追平后回落到基准节拍。
  */
 const WS_RELEASE_MIN_MS = 200;
 const WS_RELEASE_MAX_MS = 3_000;
-/** 还没测出到达间隔前的兜底（实测活跃节点约 2 秒一条）。 */
-const WS_ARRIVAL_GAP_DEFAULT_MS = 2_000;
-/** 只采信这个区间内的到达间隔，滤掉重连突发与长时间静默。 */
-const WS_ARRIVAL_GAP_MIN_MS = 500;
+/** 还没测出到达簇间隔前的兜底（实测全局约 1 秒一簇）。 */
+const WS_ARRIVAL_GAP_DEFAULT_MS = 1_000;
+/** 只采信这个区间内的簇间隔：小于下限算同一簇内的错开，大于上限算重连/长静默。 */
+const WS_ARRIVAL_GAP_MIN_MS = 300;
 const WS_ARRIVAL_GAP_MAX_MS = 15_000;
 const WS_ARRIVAL_ALPHA = 0.25;
 /** 各节点是错开几十~两百毫秒到达的，用一个很短的窗口把这一簇并成一次渲染。 */
@@ -112,9 +114,9 @@ const WS_CLUSTER_WINDOW_MS = 150;
 const WS_MAX_QUEUE_PER_SERVER = 8;
 
 /**
- * 下一帧该隔多久放：到达间隔 ÷ 待放帧数。
- * `remainingDepth` 是本次放完后队列里还剩的最大深度；+1 是把"下一批到达"也算作一个槽位，
- * 这样 2 秒来 2 个时是 1 秒一个，正好在下一批到达时放完。
+ * 每拍间隔：基准是实测的到达簇间隔，队列有积压时按深度分摊加快。
+ * `remainingDepth` 是本次放完后队列里还剩的最大深度；+1 把"下一簇到达"也算一个槽位，
+ * 于是积压能在下一簇到达前正好放完，稳态下就等于基准节拍。
  */
 export function resolveWsReleaseIntervalMs(
   arrivalGapMs: number,
@@ -752,11 +754,13 @@ async function performServersSync() {
  * ------------------------------------------------------------------ */
 /** 每台节点一条按 ts 升序的待放队列。 */
 const wsQueueByServer = new Map<string, WsSample[]>();
-/** 每台节点上一次「到达」的墙钟时刻，用来实测到达间隔。 */
-const wsLastArrivalAtByServer = new Map<string, number>();
-/** 到达间隔的 EMA（毫秒）；0 = 还没测出。 */
+/** 上一簇推送到达的墙钟时刻，用来实测「到达簇间隔」。 */
+let wsLastArrivalAt = 0;
+/** 到达簇间隔的 EMA（毫秒）；0 = 还没测出。 */
 let wsArrivalGapEmaMs = 0;
 let wsReleaseTimer: number | null = null;
+/** 上一拍的时刻，用来把下一拍对齐到固定节拍上（消除处理耗时带来的漂移）。 */
+let wsLastReleaseAt = 0;
 
 /**
  * 诊断开关：URL 带 `?wsdebug=1` 时，把每次放帧的节点数 / 距上次时长 / 到达间隔 / 队列深度
@@ -789,9 +793,22 @@ export function getWsPlaybackStats() {
   };
 }
 
-/** 每台节点放出队首一帧，合成一次提交；队列还有货就按 到达间隔÷待放数 排下一次。 */
+/**
+ * 排下一拍。按「上一拍时刻 + 节拍」对齐，减去本拍处理耗时，
+ * 这样连续放帧的间隔是稳定的节拍，而不是每次都从"现在"重新起算而累积漂移。
+ */
+function scheduleNextRelease(depth: number): void {
+  if (wsReleaseTimer != null) return;
+  const interval = resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, depth);
+  const drift = wsLastReleaseAt > 0 ? Date.now() - wsLastReleaseAt : 0;
+  const delay = Math.max(WS_RELEASE_MIN_MS / 2, interval - drift);
+  wsReleaseTimer = window.setTimeout(releaseWsSamples, delay);
+}
+
+/** 每台节点放出队首一帧，合成一次提交；队列还有货就按稳定节拍排下一拍。 */
 function releaseWsSamples(): void {
   wsReleaseTimer = null;
+  wsLastReleaseAt = Date.now();
   const batch: WsSample[] = [];
   for (const [serverId, queue] of wsQueueByServer) {
     const sample = queue.shift();
@@ -802,25 +819,19 @@ function releaseWsSamples(): void {
   const depth = maxQueueDepth();
   if (batch.length > 0) {
     if (WS_DEBUG) {
-      const now = Date.now();
-      const gap = wsDebugLastReleaseAt > 0 ? now - wsDebugLastReleaseAt : 0;
-      wsDebugLastReleaseAt = now;
+      const gap = wsDebugLastReleaseAt > 0 ? wsLastReleaseAt - wsDebugLastReleaseAt : 0;
+      wsDebugLastReleaseAt = wsLastReleaseAt;
       wsDebugReleases += 1;
       console.info(
         `[LuminaPlus WS] release#${wsDebugReleases} 更新${batch.length}节点 · ` +
-          `距上次${gap}ms · 到达间隔EMA ${Math.round(wsArrivalGapEmaMs)}ms · ` +
-          `剩余深度${depth} · 下次${depth > 0 ? Math.round(resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, depth)) : "-"}ms`,
+          `距上次${gap}ms · 簇间隔EMA ${Math.round(wsArrivalGapEmaMs)}ms · ` +
+          `剩余深度${depth} · 节拍${Math.round(resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, depth))}ms`,
       );
     }
     applyWsSamples(batch);
   }
 
-  if (depth > 0) {
-    wsReleaseTimer = window.setTimeout(
-      releaseWsSamples,
-      resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, depth),
-    );
-  }
+  if (depth > 0) scheduleNextRelease(depth);
 }
 
 /**
@@ -830,24 +841,21 @@ function releaseWsSamples(): void {
 function enqueueWsSamples(samples: WsSample[]): void {
   if (samples.length === 0) return;
   const now = Date.now();
-  const arrivedServers = new Set<string>();
+
+  // 节拍取自「到达簇间隔」：全局统计相邻两簇的时间差，簇内几十毫秒的错开不计。
+  // 各节点自己约 2 秒一条但彼此错开，全局看约 1 秒来一簇 —— 用簇间隔当节拍，
+  // 屏幕上就是每约 1 秒匀速更新一批，而不是每 2 秒整屏一起跳。
+  const gap = wsLastArrivalAt > 0 ? now - wsLastArrivalAt : 0;
+  if (gap >= WS_ARRIVAL_GAP_MIN_MS && gap <= WS_ARRIVAL_GAP_MAX_MS) {
+    wsArrivalGapEmaMs =
+      wsArrivalGapEmaMs === 0
+        ? gap
+        : wsArrivalGapEmaMs * (1 - WS_ARRIVAL_ALPHA) + gap * WS_ARRIVAL_ALPHA;
+  }
+  if (gap === 0 || gap >= WS_ARRIVAL_GAP_MIN_MS) wsLastArrivalAt = now;
 
   for (const sample of samples) {
     const serverId = sample.serverId;
-    // 到达间隔按节点各自统计（同一批里同一台只记一次）。
-    if (!arrivedServers.has(serverId)) {
-      arrivedServers.add(serverId);
-      const last = wsLastArrivalAtByServer.get(serverId);
-      wsLastArrivalAtByServer.set(serverId, now);
-      const gap = last != null ? now - last : 0;
-      if (gap >= WS_ARRIVAL_GAP_MIN_MS && gap <= WS_ARRIVAL_GAP_MAX_MS) {
-        wsArrivalGapEmaMs =
-          wsArrivalGapEmaMs === 0
-            ? gap
-            : wsArrivalGapEmaMs * (1 - WS_ARRIVAL_ALPHA) + gap * WS_ARRIVAL_ALPHA;
-      }
-    }
-
     const ts = normalizeTimestamp(sample.ts);
     // 不把已显示（REST 首屏或已放过）的节点倒回更旧的帧。
     const shownTs = normalizeTimestamp(state.rawByUuid[serverId]?.last_updated ?? 0);
@@ -866,7 +874,8 @@ function enqueueWsSamples(samples: WsSample[]): void {
     }
   }
 
-  // 各节点错开几十毫秒到达，等一个很短的窗口把这一簇并成一次渲染再开始放。
+  // 空闲后的第一拍：等一个很短的窗口把这一簇并成一次渲染再放；
+  // 之后由 releaseWsSamples 自己按稳定节拍续排。
   if (wsQueueByServer.size > 0 && wsReleaseTimer == null) {
     wsReleaseTimer = window.setTimeout(releaseWsSamples, WS_CLUSTER_WINDOW_MS);
   }
@@ -878,7 +887,8 @@ function resetWsCoalesceState(): void {
     wsReleaseTimer = null;
   }
   wsQueueByServer.clear();
-  wsLastArrivalAtByServer.clear();
+  wsLastArrivalAt = 0;
+  wsLastReleaseAt = 0;
   wsArrivalGapEmaMs = 0;
   wsDebugReleases = 0;
   wsDebugLastReleaseAt = 0;

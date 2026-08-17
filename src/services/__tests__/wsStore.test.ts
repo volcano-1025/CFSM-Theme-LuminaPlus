@@ -43,14 +43,14 @@ describe("resolveTrafficTotal", () => {
 });
 
 describe("resolveWsReleaseIntervalMs", () => {
-  it("keeps the arrival cadence when each batch brings one frame", () => {
-    // 2 秒来 1 个：放完就空，下一批到达时再放 → 2 秒一跳。
-    expect(resolveWsReleaseIntervalMs(2_000, 0)).toBe(2_000);
+  it("uses the measured cluster cadence as the steady beat", () => {
+    // 全局约 1 秒来一簇：稳态下就按 1 秒一拍放，屏幕上每秒匀速更新一批。
+    expect(resolveWsReleaseIntervalMs(1_000, 0)).toBe(1_000);
   });
 
-  it("halves the interval when each batch brings two frames", () => {
-    // 2 秒来 2 个：放掉一个还剩一个 → 1 秒后放第二个，正好在下一批到达时放完。
-    expect(resolveWsReleaseIntervalMs(2_000, 1)).toBe(1_000);
+  it("halves the beat when a backlog must drain before the next cluster", () => {
+    // 一簇带来 2 帧：放掉一个还剩一个 → 半拍后放第二个，正好在下一簇到达时放完。
+    expect(resolveWsReleaseIntervalMs(1_000, 1)).toBe(500);
   });
 
   it("spreads a deeper backlog evenly across the arrival gap", () => {
@@ -60,9 +60,9 @@ describe("resolveWsReleaseIntervalMs", () => {
     expect(resolveWsReleaseIntervalMs(12_000, 5)).toBe(2_000);
   });
 
-  it("falls back to the default gap before one is measured", () => {
-    expect(resolveWsReleaseIntervalMs(0, 0)).toBe(2_000);
-    expect(resolveWsReleaseIntervalMs(0, 1)).toBe(1_000);
+  it("falls back to the default cluster gap before one is measured", () => {
+    expect(resolveWsReleaseIntervalMs(0, 0)).toBe(1_000);
+    expect(resolveWsReleaseIntervalMs(0, 1)).toBe(500);
   });
 
   it("clamps so playback never storms or stalls", () => {

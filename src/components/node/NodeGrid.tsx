@@ -36,7 +36,6 @@ import { useHomeSort } from "@/hooks/useHomeSort";
 import { useHomeNodeOrder } from "@/hooks/useHomeNodeOrder";
 import { useHourlyClock } from "@/hooks/useClock";
 import { preloadAssetsPage } from "@/services/assetsPageLoader";
-import { usePacedRate } from "@/hooks/usePacedRate";
 import { HomeSortControl } from "./HomeSortControl";
 import {
   getOverviewRating,
@@ -417,13 +416,6 @@ export function NodeGrid() {
       netDown,
     };
   }, [visibleNodes]);
-  // 「实时带宽」是跨节点求和，而各节点错开上报、每次提交只更新其中几台，
-  // 跟着每次提交重算就是「部分新+部分旧」的和，看上去乱跳。按固定节拍整体换一次。
-  const pacedNet = usePacedRate(overview.netUp, overview.netDown);
-  const displayOverview = useMemo<HomeOverview>(
-    () => ({ ...overview, netUp: pacedNet.up, netDown: pacedNet.down }),
-    [overview, pacedNet],
-  );
   const showHomeOverview = themeSettings.isReady && themeSettings.showHomeOverview;
   const hasNodes = visibleMeta.length > 0;
   // 卡内入口与悬浮入口互斥，避免重复操作入口。
@@ -653,7 +645,7 @@ export function NodeGrid() {
       <HomeBrand siteName={siteName} />
       {showHomeOverview && (
         <HomeOverviewCards
-          overview={displayOverview}
+          overview={overview}
           dense={mode === "mini" || mode === "list"}
           showDetailButton={showCostDetailButton}
           renewalNodes={renewalNodes}
