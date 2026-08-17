@@ -35,6 +35,7 @@ import { getDisplayRegionCode } from "@/utils/geo";
 import { useHomeSort } from "@/hooks/useHomeSort";
 import { useHomeNodeOrder } from "@/hooks/useHomeNodeOrder";
 import { useHourlyClock } from "@/hooks/useClock";
+import { usePacedRate } from "@/hooks/usePacedRate";
 import { preloadAssetsPage } from "@/services/assetsPageLoader";
 import { HomeSortControl } from "./HomeSortControl";
 import {
@@ -416,6 +417,13 @@ export function NodeGrid() {
       netDown,
     };
   }, [visibleNodes]);
+  // 顶部「实时带宽」是跨节点求和，各节点相位不同会让它一秒内变好几次。
+  // 单独按 1 秒节拍统一换一次；卡片仍按各自节奏刷新。
+  const pacedNet = usePacedRate(overview.netUp, overview.netDown);
+  const displayOverview = useMemo<HomeOverview>(
+    () => ({ ...overview, netUp: pacedNet.up, netDown: pacedNet.down }),
+    [overview, pacedNet],
+  );
   const showHomeOverview = themeSettings.isReady && themeSettings.showHomeOverview;
   const hasNodes = visibleMeta.length > 0;
   // 卡内入口与悬浮入口互斥，避免重复操作入口。
@@ -645,7 +653,7 @@ export function NodeGrid() {
       <HomeBrand siteName={siteName} />
       {showHomeOverview && (
         <HomeOverviewCards
-          overview={overview}
+          overview={displayOverview}
           dense={mode === "mini" || mode === "list"}
           showDetailButton={showCostDetailButton}
           renewalNodes={renewalNodes}

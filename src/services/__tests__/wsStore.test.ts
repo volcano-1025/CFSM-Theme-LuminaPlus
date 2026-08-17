@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTrafficTotal, resolveWsReleaseIntervalMs } from "@/services/wsStore";
+import { resolveTrafficTotal, resolveWsNodeIntervalMs } from "@/services/wsStore";
 
 // 像 resolveTrafficTotals 每个 tick 那样,把一串原始累计读数喂给 resolver:把上一个显示值
 //(store 存在 node metrics 上)往后传。
@@ -42,31 +42,32 @@ describe("resolveTrafficTotal", () => {
   });
 });
 
-describe("resolveWsReleaseIntervalMs", () => {
-  it("uses the measured cluster cadence as the steady beat", () => {
-    // 全局约 1 秒来一簇：稳态下就按 1 秒一拍放，屏幕上每秒匀速更新一批。
-    expect(resolveWsReleaseIntervalMs(1_000, 0)).toBe(1_000);
+describe("resolveWsNodeIntervalMs", () => {
+  it("shows one frame per arrival when a node sends one at a time", () => {
+    // 2 秒来 1 帧：放完队列就空 → 下一帧在 2 秒后，即 2 秒更新一次。
+    expect(resolveWsNodeIntervalMs(2_000, 0)).toBe(2_000);
   });
 
-  it("halves the beat when a backlog must drain before the next cluster", () => {
-    // 一簇带来 2 帧：放掉一个还剩一个 → 半拍后放第二个，正好在下一簇到达时放完。
-    expect(resolveWsReleaseIntervalMs(1_000, 1)).toBe(500);
+  it("splits the arrival gap when a node sends two frames at once", () => {
+    // 2 秒来 2 帧：放掉一帧还剩一帧 → 1 秒后放第二帧，正好在下次到达前铺完。
+    expect(resolveWsNodeIntervalMs(2_000, 1)).toBe(1_000);
   });
 
-  it("spreads a deeper backlog evenly across the arrival gap", () => {
-    // 4 秒来 4 个：剩 3 个 → 每秒一个。
-    expect(resolveWsReleaseIntervalMs(4_000, 3)).toBe(1_000);
-    // 12 秒来 6 个：剩 5 个 → 每 2 秒一个。
-    expect(resolveWsReleaseIntervalMs(12_000, 5)).toBe(2_000);
+  it("paces a faster node by its own cadence, independent of others", () => {
+    // 约 1.1 秒来 1 帧的节点按自己的节奏走，不被别人的 2 秒拖慢。
+    expect(resolveWsNodeIntervalMs(1_100, 0)).toBe(1_100);
   });
 
-  it("falls back to the default cluster gap before one is measured", () => {
-    expect(resolveWsReleaseIntervalMs(0, 0)).toBe(1_000);
-    expect(resolveWsReleaseIntervalMs(0, 1)).toBe(500);
+  it("spreads a burst of frames evenly across the arrival gap", () => {
+    expect(resolveWsNodeIntervalMs(4_000, 3)).toBe(1_000);
+  });
+
+  it("falls back to the default cadence before one is measured", () => {
+    expect(resolveWsNodeIntervalMs(0, 0)).toBe(1_000);
   });
 
   it("clamps so playback never storms or stalls", () => {
-    expect(resolveWsReleaseIntervalMs(1_000, 20)).toBe(200);
-    expect(resolveWsReleaseIntervalMs(15_000, 0)).toBe(3_000);
+    expect(resolveWsNodeIntervalMs(1_000, 20)).toBe(200);
+    expect(resolveWsNodeIntervalMs(15_000, 0)).toBe(3_000);
   });
 });

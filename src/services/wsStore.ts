@@ -105,26 +105,13 @@ const WS_RELEASE_MIN_MS = 200;
 const WS_RELEASE_MAX_MS = 3_000;
 /** 还没测出到达簇间隔前的兜底（实测全局约 1 秒一簇）。 */
 const WS_ARRIVAL_GAP_DEFAULT_MS = 1_000;
-/** 只采信这个区间内的簇间隔：小于下限算同一簇内的错开，大于上限算重连/长静默。 */
+/** 每台节点最多排队多少帧；超了丢最老的，避免显示越拖越旧。 */
+const WS_MAX_QUEUE_PER_SERVER = 8;
+/** 只采信这个区间内的到达间隔：小于下限算同一次到达内的错开，大于上限算重连/长静默。 */
 const WS_ARRIVAL_GAP_MIN_MS = 300;
 const WS_ARRIVAL_GAP_MAX_MS = 15_000;
 const WS_ARRIVAL_ALPHA = 0.25;
-/** 各节点是错开几十~两百毫秒到达的，用一个很短的窗口把这一簇并成一次渲染。 */
-const WS_CLUSTER_WINDOW_MS = 150;
 
-/**
- * 每拍间隔 = 实测的到达簇间隔（钳在上下限内）。
- * `remainingDepth` 保留给未来可能的积压分摊，当前恒传 0：每拍只提交各节点的最新帧，
- * 不再攒队列，也就没有积压需要分摊。
- */
-export function resolveWsReleaseIntervalMs(
-  arrivalGapMs: number,
-  remainingDepth: number,
-): number {
-  const gap = arrivalGapMs > 0 ? arrivalGapMs : WS_ARRIVAL_GAP_DEFAULT_MS;
-  const slots = Math.max(1, remainingDepth + 1);
-  return Math.min(WS_RELEASE_MAX_MS, Math.max(WS_RELEASE_MIN_MS, gap / slots));
-}
 const SCROLL_IDLE_DELAY_MS = 160;
 const TRAFFIC_TREND_SAMPLE_COUNT = 18;
 
@@ -751,99 +738,107 @@ async function performServersSync() {
 /* ------------------------------------------------------------------ *
  * WebSocket 推送合流缓冲
  * ------------------------------------------------------------------ */
-/** 每台节点只留**最新**一帧待提交：中间帧对实时面板没有展示价值，留着只会让显示滞后。 */
-const wsLatestByServer = new Map<string, WsSample>();
-/** 上一簇推送到达的墙钟时刻，用来实测「到达簇间隔」。 */
-let wsLastArrivalAt = 0;
-/** 到达簇间隔的 EMA（毫秒）；0 = 还没测出。 */
-let wsArrivalGapEmaMs = 0;
-let wsBeatTimer: number | null = null;
-/** 上一拍的时刻，用来把下一拍对齐到固定节拍上（消除处理耗时带来的漂移）。 */
-let wsLastBeatAt = 0;
+/** 每台节点的待放队列与它自己的到达节奏。 */
+interface PendingNode {
+  queue: WsSample[];
+  /** 该节点两次到达的间隔 EMA（毫秒）。 */
+  arrivalEmaMs: number;
+  lastArrivalAt: number;
+  /** 下一帧该在什么时刻放出。 */
+  nextDueAt: number;
+}
+const wsPendingByServer = new Map<string, PendingNode>();
+let wsTickTimer: number | null = null;
+/** 细粒度轮询：到点的节点在同一拍里合成一次提交，避免每台各自触发渲染。 */
+const WS_TICK_MS = 100;
 
 /**
- * 诊断开关：URL 带 `?wsdebug=1` 时，把每拍更新的节点数 / 距上次时长 / 簇间隔 / 节拍
- * 打到控制台。本地无 WSS，只能靠线上这份输出核对。
+ * 诊断开关：URL 带 `?wsdebug=1` 时，把每次提交的节点数、以及各节点的到达节奏打到控制台。
  */
 const WS_DEBUG =
   typeof location !== "undefined" && /[?&]wsdebug=1(?:&|$)/.test(location.search);
-let wsDebugBeats = 0;
-let wsDebugLastBeatAt = 0;
+let wsDebugCommits = 0;
+let wsDebugLastCommitAt = 0;
 
-/** 供控制台随时读取当前节拍状态，配合 `?wsdebug=1` 使用。 */
+/** 供控制台随时读取当前节奏，配合 `?wsdebug=1` 使用。 */
 export function getWsPlaybackStats() {
-  return {
-    arrivalGapEmaMs: Math.round(wsArrivalGapEmaMs),
-    beatMs: resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, 0),
-    pendingServers: wsLatestByServer.size,
-    serverCount: state.order.length,
-    beats: wsDebugBeats,
-  };
+  const nodes: Record<string, { 到达间隔: number; 待放: number }> = {};
+  for (const [serverId, pending] of wsPendingByServer) {
+    nodes[serverId.slice(0, 8)] = {
+      到达间隔: Math.round(pending.arrivalEmaMs),
+      待放: pending.queue.length,
+    };
+  }
+  return { serverCount: state.order.length, commits: wsDebugCommits, nodes };
 }
 
 /**
- * 排下一拍。按「上一拍时刻 + 节拍」对齐并减去本拍耗时，让连续两拍的间隔稳定等于节拍，
- * 而不是每次从"现在"重新起算而累积漂移。
+ * 某节点放完一帧后，下一帧该隔多久。
+ *
+ * 目标：**这台节点上报多快，就显示多快，且匀速**。一次到达带来的若干帧，要在下一次到达前
+ * 均匀铺完 —— 队列里还剩 N 帧，就把「到下次到达的时间」切成 N+1 份。
+ * 于是 2 秒来 2 帧就是 1 秒一帧、2 秒来 1 帧就是 2 秒一帧，各节点各按各的节奏，互不影响。
  */
-function scheduleNextBeat(): void {
-  if (wsBeatTimer != null) return;
-  const beat = resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, 0);
-  const drift = wsLastBeatAt > 0 ? Date.now() - wsLastBeatAt : 0;
-  wsBeatTimer = window.setTimeout(
-    runWsBeat,
-    Math.max(WS_RELEASE_MIN_MS / 2, beat - drift),
+export function resolveWsNodeIntervalMs(
+  arrivalEmaMs: number,
+  remainingFrames: number,
+): number {
+  const arrival = arrivalEmaMs > 0 ? arrivalEmaMs : WS_ARRIVAL_GAP_DEFAULT_MS;
+  return Math.min(
+    WS_RELEASE_MAX_MS,
+    Math.max(WS_RELEASE_MIN_MS, arrival / Math.max(1, remainingFrames + 1)),
   );
 }
 
-/**
- * 一拍：把各节点攒到的最新一帧一次性提交，然后立刻排下一拍。
- *
- * 节拍器**持续运行**（哪怕这一拍没有新数据），所有节点的更新因此都落在同一条时间网格上：
- * 上报快的节点每拍更新、约 2 秒上报一次的节点隔拍更新，各自都是匀速的。
- * 只取最新帧、丢掉中间帧，是为了不让上报快的节点攒出队列 —— 攒队列会让它显示的值
- * 一直滞后一拍，看起来就像它在乱跳（v1.2.6 的「每拍每节点放一帧」正是栽在这里）。
- */
-function runWsBeat(): void {
-  wsBeatTimer = null;
-  wsLastBeatAt = Date.now();
+function scheduleWsTick(): void {
+  if (wsTickTimer != null) return;
+  wsTickTimer = window.setTimeout(runWsTick, WS_TICK_MS);
+}
 
-  if (wsLatestByServer.size > 0) {
-    const batch = [...wsLatestByServer.values()];
-    wsLatestByServer.clear();
+/** 一拍：把所有「到点」的节点各放一帧，合成一次提交。 */
+function runWsTick(): void {
+  wsTickTimer = null;
+  const now = Date.now();
+  const batch: WsSample[] = [];
+  let pendingFrames = 0;
+
+  for (const [serverId, pending] of wsPendingByServer) {
+    if (pending.queue.length > 0 && now >= pending.nextDueAt) {
+      batch.push(pending.queue.shift()!);
+      pending.nextDueAt =
+        now + resolveWsNodeIntervalMs(pending.arrivalEmaMs, pending.queue.length);
+    }
+    if (pending.queue.length === 0 && now - pending.lastArrivalAt > WS_ARRIVAL_GAP_MAX_MS) {
+      wsPendingByServer.delete(serverId);
+      continue;
+    }
+    pendingFrames += pending.queue.length;
+  }
+
+  if (batch.length > 0) {
     if (WS_DEBUG) {
-      const gap = wsDebugLastBeatAt > 0 ? wsLastBeatAt - wsDebugLastBeatAt : 0;
-      wsDebugLastBeatAt = wsLastBeatAt;
-      wsDebugBeats += 1;
+      const gap = wsDebugLastCommitAt > 0 ? now - wsDebugLastCommitAt : 0;
+      wsDebugLastCommitAt = now;
+      wsDebugCommits += 1;
       console.info(
-        `[LuminaPlus WS] beat#${wsDebugBeats} 更新${batch.length}节点 · ` +
-          `距上次${gap}ms · 簇间隔EMA ${Math.round(wsArrivalGapEmaMs)}ms · ` +
-          `节拍${Math.round(resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, 0))}ms`,
+        `[LuminaPlus WS] commit#${wsDebugCommits} 更新${batch.length}节点 · ` +
+          `距上次${gap}ms · 待放${pendingFrames}帧 · 节点${wsPendingByServer.size}`,
       );
     }
     applyWsSamples(batch);
   }
 
-  // 只要连着 WS 就一直打拍子：空拍不提交，但网格不能断，否则下次更新又要重新对齐。
-  if (realtimeConnected || wsLatestByServer.size > 0) scheduleNextBeat();
+  if (wsPendingByServer.size > 0) scheduleWsTick();
 }
 
 /**
- * WS 推送入口：每台节点只记最新一帧，由节拍器按实测的「到达簇间隔」匀速提交。
- * 不论后端怎么调上报频率、各节点快慢是否一致，屏幕上的更新都对齐到同一条时间网格。
+ * WS 推送入口：按节点入队，并实测每台节点自己的到达节奏；
+ * 由 {@link runWsTick} 按各自节奏把帧匀速放出，快的节点放得密、慢的放得疏，各自都匀速。
  */
 function enqueueWsSamples(samples: WsSample[]): void {
   if (samples.length === 0) return;
   const now = Date.now();
-
-  // 节拍取自「到达簇间隔」：全局统计相邻两簇的时间差，簇内几十毫秒的错开不计。
-  const gap = wsLastArrivalAt > 0 ? now - wsLastArrivalAt : 0;
-  if (gap >= WS_ARRIVAL_GAP_MIN_MS && gap <= WS_ARRIVAL_GAP_MAX_MS) {
-    wsArrivalGapEmaMs =
-      wsArrivalGapEmaMs === 0
-        ? gap
-        : wsArrivalGapEmaMs * (1 - WS_ARRIVAL_ALPHA) + gap * WS_ARRIVAL_ALPHA;
-  }
-  if (gap === 0 || gap >= WS_ARRIVAL_GAP_MIN_MS) wsLastArrivalAt = now;
+  const arrivedServers = new Set<string>();
 
   for (const sample of samples) {
     const serverId = sample.serverId;
@@ -851,28 +846,53 @@ function enqueueWsSamples(samples: WsSample[]): void {
     // 不把已显示（REST 首屏或已提交过）的节点倒回更旧的帧。
     const shownTs = normalizeTimestamp(state.rawByUuid[serverId]?.last_updated ?? 0);
     if (ts > 0 && ts <= shownTs) continue;
-    const pending = wsLatestByServer.get(serverId);
-    if (pending && ts > 0 && normalizeTimestamp(pending.ts) >= ts) continue;
-    wsLatestByServer.set(serverId, sample);
+
+    let pending = wsPendingByServer.get(serverId);
+    if (!pending) {
+      pending = { queue: [], arrivalEmaMs: 0, lastArrivalAt: 0, nextDueAt: 0 };
+      wsPendingByServer.set(serverId, pending);
+    }
+
+    // 到达节奏按节点各自统计（同一批里同一台只记一次）。
+    if (!arrivedServers.has(serverId)) {
+      arrivedServers.add(serverId);
+      const gap = pending.lastArrivalAt > 0 ? now - pending.lastArrivalAt : 0;
+      if (gap >= WS_ARRIVAL_GAP_MIN_MS && gap <= WS_ARRIVAL_GAP_MAX_MS) {
+        pending.arrivalEmaMs =
+          pending.arrivalEmaMs === 0
+            ? gap
+            : pending.arrivalEmaMs * (1 - WS_ARRIVAL_ALPHA) + gap * WS_ARRIVAL_ALPHA;
+      }
+      pending.lastArrivalAt = now;
+    }
+
+    const lastQueuedTs =
+      pending.queue.length > 0
+        ? normalizeTimestamp(pending.queue[pending.queue.length - 1]!.ts)
+        : 0;
+    if (ts > 0 && ts === lastQueuedTs) continue;
+    pending.queue.push(sample);
+    // 积压过多（补发一大段历史）时丢最老的，避免显示越拖越旧。
+    if (pending.queue.length > WS_MAX_QUEUE_PER_SERVER) {
+      pending.queue.splice(0, pending.queue.length - WS_MAX_QUEUE_PER_SERVER);
+    }
+    // 空闲后的第一帧立刻可放，不必等一个到达间隔。
+    if (pending.nextDueAt === 0 || now > pending.nextDueAt + WS_ARRIVAL_GAP_MAX_MS) {
+      pending.nextDueAt = now;
+    }
   }
 
-  // 空闲后的第一拍：等一个很短的窗口把这一簇并成一次渲染，之后由节拍器自己续排。
-  if (wsLatestByServer.size > 0 && wsBeatTimer == null) {
-    wsBeatTimer = window.setTimeout(runWsBeat, WS_CLUSTER_WINDOW_MS);
-  }
+  if (wsPendingByServer.size > 0) scheduleWsTick();
 }
 
 function resetWsCoalesceState(): void {
-  if (wsBeatTimer != null) {
-    window.clearTimeout(wsBeatTimer);
-    wsBeatTimer = null;
+  if (wsTickTimer != null) {
+    window.clearTimeout(wsTickTimer);
+    wsTickTimer = null;
   }
-  wsLatestByServer.clear();
-  wsLastArrivalAt = 0;
-  wsLastBeatAt = 0;
-  wsArrivalGapEmaMs = 0;
-  wsDebugBeats = 0;
-  wsDebugLastBeatAt = 0;
+  wsPendingByServer.clear();
+  wsDebugCommits = 0;
+  wsDebugLastCommitAt = 0;
 }
 
 /** 实时样本落到已知节点上；未知节点等下一次全量刷新再出现。 */
