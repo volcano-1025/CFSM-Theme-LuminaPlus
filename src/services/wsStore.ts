@@ -87,19 +87,43 @@ const ONLINE_RECHECK_INTERVAL_MS = 15_000;
 const SERVERS_REQUEST_TIMEOUT_MS = 8_000;
 
 /* ------------------------------------------------------------------ *
- * WebSocket 推送合流（轻量去抖）
+ * WebSocket 推送回放（按到达节奏匀速铺开）
  * ------------------------------------------------------------------ */
 /**
- * 实测（monitor.8881025.xyz，agent v1.0.7）：后端 WSS 是**逐台的实时流**——每条消息一台节点、
- * 一个样本、各带真实 ts；活跃节点约 **2 秒**一条（ts 间距 1999/2002/2000…），并非「一批打包多点」。
- * 慢节点偶尔会把攒下的几帧（ts 相隔约 10s 的历史点）一次性补发。
+ * 后端会按"有没有人在看"调整上报频率，一次推来的样本数因此不固定（实测：活跃节点约 2 秒一条；
+ * 慢节点会把攒下的几帧一次性补发）。目标是**不论几秒推几个，看起来都匀速**：
+ * 一批 N 个、每 T 毫秒来一批，就每 T/N 毫秒放一个。
  *
- * 所以正确做法很简单：每台节点只留**最新**样本，用一个很短的窗口把「同一刻到达的多台」并成一次渲染，
- * 到点提交。这样每台按自己的 ~2s 节奏近实时刷新、不再「一秒跳好几个」；慢节点的补发只显示最新一帧、
- * 不回放旧点，也就不会「刚打开乱跳」。数据本身就是 2s/台，前端无法凭空变出每秒的值
- * （后台看着 1s 平滑是它在做插值动画，是另一回事——见 CHANGELOG 说明）。
+ * 节奏取自**实际到达时间**间隔，而不是样本自带的 ts —— 补发的历史帧 ts 相隔十几秒却同时到达，
+ * 拿 ts 算会把节奏算成十几秒、越积越多（上一版正是栽在这里）。队列深度参与分母，
+ * 于是积压时自动加快、追平后自动回落，不会越拖越久。
  */
-const WS_FLUSH_WINDOW_MS = 300;
+const WS_RELEASE_MIN_MS = 200;
+const WS_RELEASE_MAX_MS = 3_000;
+/** 还没测出到达间隔前的兜底（实测活跃节点约 2 秒一条）。 */
+const WS_ARRIVAL_GAP_DEFAULT_MS = 2_000;
+/** 只采信这个区间内的到达间隔，滤掉重连突发与长时间静默。 */
+const WS_ARRIVAL_GAP_MIN_MS = 500;
+const WS_ARRIVAL_GAP_MAX_MS = 15_000;
+const WS_ARRIVAL_ALPHA = 0.25;
+/** 各节点是错开几十~两百毫秒到达的，用一个很短的窗口把这一簇并成一次渲染。 */
+const WS_CLUSTER_WINDOW_MS = 150;
+/** 每台节点最多排队多少帧；超了丢最老的，避免落后现实太久。 */
+const WS_MAX_QUEUE_PER_SERVER = 8;
+
+/**
+ * 下一帧该隔多久放：到达间隔 ÷ 待放帧数。
+ * `remainingDepth` 是本次放完后队列里还剩的最大深度；+1 是把"下一批到达"也算作一个槽位，
+ * 这样 2 秒来 2 个时是 1 秒一个，正好在下一批到达时放完。
+ */
+export function resolveWsReleaseIntervalMs(
+  arrivalGapMs: number,
+  remainingDepth: number,
+): number {
+  const gap = arrivalGapMs > 0 ? arrivalGapMs : WS_ARRIVAL_GAP_DEFAULT_MS;
+  const slots = Math.max(1, remainingDepth + 1);
+  return Math.min(WS_RELEASE_MAX_MS, Math.max(WS_RELEASE_MIN_MS, gap / slots));
+}
 const SCROLL_IDLE_DELAY_MS = 160;
 const TRAFFIC_TREND_SAMPLE_COUNT = 18;
 
@@ -712,77 +736,138 @@ async function performServersSync() {
 /* ------------------------------------------------------------------ *
  * WebSocket 推送合流缓冲
  * ------------------------------------------------------------------ */
-/** 每台节点只保留最新一个待提交样本；同一刻到达的多台由短窗口并成一次渲染。 */
-const wsLatestByServer = new Map<string, WsSample>();
-let wsFlushTimer: number | null = null;
+/** 每台节点一条按 ts 升序的待放队列。 */
+const wsQueueByServer = new Map<string, WsSample[]>();
+/** 每台节点上一次「到达」的墙钟时刻，用来实测到达间隔。 */
+const wsLastArrivalAtByServer = new Map<string, number>();
+/** 到达间隔的 EMA（毫秒）；0 = 还没测出。 */
+let wsArrivalGapEmaMs = 0;
+let wsReleaseTimer: number | null = null;
 
 /**
- * 诊断开关：URL 带 `?wsdebug=1` 时，把每次合流的节点数 / 距上次时长打到控制台。
- * 本地无 WSS，只能靠线上这份输出核对。
+ * 诊断开关：URL 带 `?wsdebug=1` 时，把每次放帧的节点数 / 距上次时长 / 到达间隔 / 队列深度
+ * 打到控制台。本地无 WSS，只能靠线上这份输出核对。
  */
 const WS_DEBUG =
   typeof location !== "undefined" && /[?&]wsdebug=1(?:&|$)/.test(location.search);
-let wsDebugFlushes = 0;
-let wsDebugLastFlushAt = 0;
+let wsDebugReleases = 0;
+let wsDebugLastReleaseAt = 0;
 
-/** 供控制台随时读取当前合流状态，配合 `?wsdebug=1` 使用。 */
-export function getWsCoalesceStats() {
+function maxQueueDepth(): number {
+  let depth = 0;
+  for (const queue of wsQueueByServer.values()) {
+    if (queue.length > depth) depth = queue.length;
+  }
+  return depth;
+}
+
+/** 供控制台随时读取当前回放状态，配合 `?wsdebug=1` 使用。 */
+export function getWsPlaybackStats() {
+  let queued = 0;
+  for (const queue of wsQueueByServer.values()) queued += queue.length;
   return {
-    windowMs: WS_FLUSH_WINDOW_MS,
-    pendingServers: wsLatestByServer.size,
+    arrivalGapEmaMs: Math.round(wsArrivalGapEmaMs),
+    nextReleaseInMs: resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, maxQueueDepth()),
+    queuedSamples: queued,
+    maxQueueDepth: maxQueueDepth(),
     serverCount: state.order.length,
-    flushes: wsDebugFlushes,
+    releases: wsDebugReleases,
   };
 }
 
-function flushWsSamples(): void {
-  wsFlushTimer = null;
-  if (wsLatestByServer.size === 0) return;
-  const batch = [...wsLatestByServer.values()];
-  wsLatestByServer.clear();
-  if (WS_DEBUG) {
-    const now = Date.now();
-    const gap = wsDebugLastFlushAt > 0 ? now - wsDebugLastFlushAt : 0;
-    wsDebugLastFlushAt = now;
-    wsDebugFlushes += 1;
-    console.info(
-      `[LuminaPlus WS] flush#${wsDebugFlushes} 更新${batch.length}节点 · ` +
-        `距上次${gap}ms · 窗口${WS_FLUSH_WINDOW_MS}ms · 节点${state.order.length}`,
+/** 每台节点放出队首一帧，合成一次提交；队列还有货就按 到达间隔÷待放数 排下一次。 */
+function releaseWsSamples(): void {
+  wsReleaseTimer = null;
+  const batch: WsSample[] = [];
+  for (const [serverId, queue] of wsQueueByServer) {
+    const sample = queue.shift();
+    if (sample) batch.push(sample);
+    if (queue.length === 0) wsQueueByServer.delete(serverId);
+  }
+
+  const depth = maxQueueDepth();
+  if (batch.length > 0) {
+    if (WS_DEBUG) {
+      const now = Date.now();
+      const gap = wsDebugLastReleaseAt > 0 ? now - wsDebugLastReleaseAt : 0;
+      wsDebugLastReleaseAt = now;
+      wsDebugReleases += 1;
+      console.info(
+        `[LuminaPlus WS] release#${wsDebugReleases} 更新${batch.length}节点 · ` +
+          `距上次${gap}ms · 到达间隔EMA ${Math.round(wsArrivalGapEmaMs)}ms · ` +
+          `剩余深度${depth} · 下次${depth > 0 ? Math.round(resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, depth)) : "-"}ms`,
+      );
+    }
+    applyWsSamples(batch);
+  }
+
+  if (depth > 0) {
+    wsReleaseTimer = window.setTimeout(
+      releaseWsSamples,
+      resolveWsReleaseIntervalMs(wsArrivalGapEmaMs, depth),
     );
   }
-  applyWsSamples(batch);
 }
 
 /**
- * WS 推送入口：每台节点只留最新样本，短窗口（尾沿）内到达的多台并成一次渲染。
- * 逐台实时流照此近实时铺出；慢节点一次补发多帧也只显示最新一帧、不回放旧点。
+ * WS 推送入口：样本按 ts 入各节点队列，由回放定时器按「到达间隔 ÷ 待放数」匀速放出。
+ * 一次推来几个就在下一批到达前均匀铺完，因此不论后端怎么调上报频率，观感都是匀速。
  */
 function enqueueWsSamples(samples: WsSample[]): void {
   if (samples.length === 0) return;
+  const now = Date.now();
+  const arrivedServers = new Set<string>();
 
   for (const sample of samples) {
+    const serverId = sample.serverId;
+    // 到达间隔按节点各自统计（同一批里同一台只记一次）。
+    if (!arrivedServers.has(serverId)) {
+      arrivedServers.add(serverId);
+      const last = wsLastArrivalAtByServer.get(serverId);
+      wsLastArrivalAtByServer.set(serverId, now);
+      const gap = last != null ? now - last : 0;
+      if (gap >= WS_ARRIVAL_GAP_MIN_MS && gap <= WS_ARRIVAL_GAP_MAX_MS) {
+        wsArrivalGapEmaMs =
+          wsArrivalGapEmaMs === 0
+            ? gap
+            : wsArrivalGapEmaMs * (1 - WS_ARRIVAL_ALPHA) + gap * WS_ARRIVAL_ALPHA;
+      }
+    }
+
     const ts = normalizeTimestamp(sample.ts);
-    // 不把当前已显示（REST 首屏或已应用）的节点倒回更旧的样本。
-    const shownTs = normalizeTimestamp(state.rawByUuid[sample.serverId]?.last_updated ?? 0);
+    // 不把已显示（REST 首屏或已放过）的节点倒回更旧的帧。
+    const shownTs = normalizeTimestamp(state.rawByUuid[serverId]?.last_updated ?? 0);
     if (ts > 0 && ts <= shownTs) continue;
-    const prev = wsLatestByServer.get(sample.serverId);
-    if (prev && ts > 0 && normalizeTimestamp(prev.ts) >= ts) continue;
-    wsLatestByServer.set(sample.serverId, sample);
+    let queue = wsQueueByServer.get(serverId);
+    if (!queue) {
+      queue = [];
+      wsQueueByServer.set(serverId, queue);
+    }
+    const lastQueuedTs =
+      queue.length > 0 ? normalizeTimestamp(queue[queue.length - 1]!.ts) : 0;
+    if (ts > 0 && ts <= lastQueuedTs) continue;
+    queue.push(sample);
+    if (queue.length > WS_MAX_QUEUE_PER_SERVER) {
+      queue.splice(0, queue.length - WS_MAX_QUEUE_PER_SERVER);
+    }
   }
 
-  if (wsLatestByServer.size > 0 && wsFlushTimer == null) {
-    wsFlushTimer = window.setTimeout(flushWsSamples, WS_FLUSH_WINDOW_MS);
+  // 各节点错开几十毫秒到达，等一个很短的窗口把这一簇并成一次渲染再开始放。
+  if (wsQueueByServer.size > 0 && wsReleaseTimer == null) {
+    wsReleaseTimer = window.setTimeout(releaseWsSamples, WS_CLUSTER_WINDOW_MS);
   }
 }
 
 function resetWsCoalesceState(): void {
-  if (wsFlushTimer != null) {
-    window.clearTimeout(wsFlushTimer);
-    wsFlushTimer = null;
+  if (wsReleaseTimer != null) {
+    window.clearTimeout(wsReleaseTimer);
+    wsReleaseTimer = null;
   }
-  wsLatestByServer.clear();
-  wsDebugFlushes = 0;
-  wsDebugLastFlushAt = 0;
+  wsQueueByServer.clear();
+  wsLastArrivalAtByServer.clear();
+  wsArrivalGapEmaMs = 0;
+  wsDebugReleases = 0;
+  wsDebugLastReleaseAt = 0;
 }
 
 /** 实时样本落到已知节点上；未知节点等下一次全量刷新再出现。 */

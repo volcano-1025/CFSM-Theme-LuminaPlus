@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTrafficTotal } from "@/services/wsStore";
+import { resolveTrafficTotal, resolveWsReleaseIntervalMs } from "@/services/wsStore";
 
 // 像 resolveTrafficTotals 每个 tick 那样,把一串原始累计读数喂给 resolver:把上一个显示值
 //(store 存在 node metrics 上)往后传。
@@ -39,5 +39,34 @@ describe("resolveTrafficTotal", () => {
 
   it("does not surface a value until a real reading arrives", () => {
     expect(drive([0, 0, 10])).toEqual([0, 0, 10]);
+  });
+});
+
+describe("resolveWsReleaseIntervalMs", () => {
+  it("keeps the arrival cadence when each batch brings one frame", () => {
+    // 2 秒来 1 个：放完就空，下一批到达时再放 → 2 秒一跳。
+    expect(resolveWsReleaseIntervalMs(2_000, 0)).toBe(2_000);
+  });
+
+  it("halves the interval when each batch brings two frames", () => {
+    // 2 秒来 2 个：放掉一个还剩一个 → 1 秒后放第二个，正好在下一批到达时放完。
+    expect(resolveWsReleaseIntervalMs(2_000, 1)).toBe(1_000);
+  });
+
+  it("spreads a deeper backlog evenly across the arrival gap", () => {
+    // 4 秒来 4 个：剩 3 个 → 每秒一个。
+    expect(resolveWsReleaseIntervalMs(4_000, 3)).toBe(1_000);
+    // 12 秒来 6 个：剩 5 个 → 每 2 秒一个。
+    expect(resolveWsReleaseIntervalMs(12_000, 5)).toBe(2_000);
+  });
+
+  it("falls back to the default gap before one is measured", () => {
+    expect(resolveWsReleaseIntervalMs(0, 0)).toBe(2_000);
+    expect(resolveWsReleaseIntervalMs(0, 1)).toBe(1_000);
+  });
+
+  it("clamps so playback never storms or stalls", () => {
+    expect(resolveWsReleaseIntervalMs(1_000, 20)).toBe(200);
+    expect(resolveWsReleaseIntervalMs(15_000, 0)).toBe(3_000);
   });
 });
