@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTrafficTotal } from "@/services/wsStore";
+import { resolveTrafficTotal, resolveWsFlushWindowMs } from "@/services/wsStore";
 
 // 像 resolveTrafficTotals 每个 tick 那样,把一串原始累计读数喂给 resolver:把上一个显示值
 //(store 存在 node metrics 上)往后传。
@@ -39,5 +39,30 @@ describe("resolveTrafficTotal", () => {
 
   it("does not surface a value until a real reading arrives", () => {
     expect(drive([0, 0, 10])).toEqual([0, 0, 10]);
+  });
+});
+
+describe("resolveWsFlushWindowMs", () => {
+  it("falls back to the default window before an interval is measured", () => {
+    // 间隔未知（0）+ 节点少：用默认 250ms。
+    expect(resolveWsFlushWindowMs(0, 5)).toBe(250);
+  });
+
+  it("tracks the measured report interval when volume is light", () => {
+    // 上报约 1s 一次 → 每秒渲染一次就够，不快于数据变化频率就不会闪。
+    expect(resolveWsFlushWindowMs(1_000, 5)).toBe(1_000);
+  });
+
+  it("widens the window for high node counts (render-budget floor)", () => {
+    // 100 台 ÷ 每秒 200 个节点次 = 500ms 下限，超过实测的 200ms 间隔。
+    expect(resolveWsFlushWindowMs(200, 100)).toBe(500);
+  });
+
+  it("clamps to the maximum so updates never feel stale", () => {
+    expect(resolveWsFlushWindowMs(5_000, 10)).toBe(2_000);
+  });
+
+  it("clamps to the minimum so a very fast stream stays responsive", () => {
+    expect(resolveWsFlushWindowMs(50, 1)).toBe(120);
   });
 });

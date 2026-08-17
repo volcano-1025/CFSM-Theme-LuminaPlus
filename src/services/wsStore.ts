@@ -10,6 +10,7 @@ import {
   emptyNodeMetrics,
   isServerOnline,
   mergeServerPatch,
+  normalizeTimestamp,
   parseLatencyWindow,
   toNodeInfo,
   toNodeMetrics,
@@ -84,6 +85,40 @@ const FULL_REFRESH_INTERVAL_MS = 30_000;
 /** 离线是"超过阈值没有上报"，没有事件驱动，只能定时重算。 */
 const ONLINE_RECHECK_INTERVAL_MS = 15_000;
 const SERVERS_REQUEST_TIMEOUT_MS = 8_000;
+
+/* ------------------------------------------------------------------ *
+ * WebSocket 推送合流（自适应节奏）
+ * ------------------------------------------------------------------ */
+/**
+ * 开 WSS 后 agent 上报频率大幅提高，后端 Durable Object 又是成簇广播；若来一条就渲染一次，
+ * 会一秒连刷好几帧、簇间又静默（观感"一顿一顿"）。这里把推送缓冲起来、按自适应窗口合并成一次
+ * 提交（同一节点取最新值）。窗口由两项动态算出（见 {@link resolveWsFlushWindowMs}）：
+ *   - 上报间隔：从样本 ts 的相邻差实测（EMA）——渲染不快于数据真正变化的频率，就不会闪；
+ *   - 数据量：节点越多、单次提交越重，用"每秒最多渲染多少个节点次"给窗口设下限，避免渲染风暴。
+ * 节流取 leading+trailing：空闲后第一帧即时出（跟手），窗口内的后续推送合并到尾部一次出（不闪）。
+ */
+const WS_COALESCE_MIN_MS = 120;
+const WS_COALESCE_MAX_MS = 2_000;
+/** 还没测出上报间隔前的兜底窗口。 */
+const WS_COALESCE_DEFAULT_MS = 250;
+/** 数据量项：每秒最多渲染这么多"节点次"，据此给窗口设下限（节点数 ÷ 该值）。 */
+const WS_COALESCE_NODE_RENDERS_PER_SEC = 200;
+/** 上报间隔 EMA 的平滑系数（新样本权重）。 */
+const WS_REPORT_INTERVAL_ALPHA = 0.2;
+
+/**
+ * 由实测上报间隔与节点数量算出合流窗口（毫秒），钳在 [MIN, MAX]。
+ * 取"上报间隔"与"数据量下限"的较大者：间隔决定该多久渲一次才不闪，数据量下限防止节点多时渲染过频。
+ */
+export function resolveWsFlushWindowMs(
+  reportIntervalMs: number,
+  serverCount: number,
+): number {
+  const interval = reportIntervalMs > 0 ? reportIntervalMs : WS_COALESCE_DEFAULT_MS;
+  const volumeFloorMs = (Math.max(0, serverCount) / WS_COALESCE_NODE_RENDERS_PER_SEC) * 1000;
+  const window = Math.max(interval, volumeFloorMs);
+  return Math.min(WS_COALESCE_MAX_MS, Math.max(WS_COALESCE_MIN_MS, window));
+}
 const SCROLL_IDLE_DELAY_MS = 160;
 const TRAFFIC_TREND_SAMPLE_COUNT = 18;
 
@@ -693,6 +728,75 @@ async function performServersSync() {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * WebSocket 推送合流缓冲
+ * ------------------------------------------------------------------ */
+let wsPendingSamples: WsSample[] = [];
+let wsFlushTimer: number | null = null;
+let wsLastFlushAt = 0;
+/** 实测上报间隔的 EMA（毫秒）；0 = 还没测出。 */
+let wsReportIntervalEmaMs = 0;
+const wsLastTsByServer = new Map<string, number>();
+
+/** 从样本 ts 的相邻差实测每台节点的上报间隔，喂进 EMA（ts 统一归一化成毫秒）。 */
+function observeReportInterval(samples: WsSample[]): void {
+  for (const sample of samples) {
+    const ts = normalizeTimestamp(sample.ts);
+    if (ts <= 0) continue;
+    const last = wsLastTsByServer.get(sample.serverId);
+    wsLastTsByServer.set(sample.serverId, ts);
+    if (last == null || ts <= last) continue;
+    const gap = ts - last;
+    // 只认合理区间内的间隔：滤掉重复帧（≈0）与掉线补发（过大）带来的污染。
+    if (gap < WS_COALESCE_MIN_MS || gap > WS_COALESCE_MAX_MS * 4) continue;
+    wsReportIntervalEmaMs =
+      wsReportIntervalEmaMs === 0
+        ? gap
+        : wsReportIntervalEmaMs * (1 - WS_REPORT_INTERVAL_ALPHA) + gap * WS_REPORT_INTERVAL_ALPHA;
+  }
+}
+
+function flushWsSampleBuffer(): void {
+  if (wsFlushTimer != null) {
+    window.clearTimeout(wsFlushTimer);
+    wsFlushTimer = null;
+  }
+  wsLastFlushAt = Date.now();
+  if (wsPendingSamples.length === 0) return;
+  const batch = wsPendingSamples;
+  wsPendingSamples = [];
+  applyWsSamples(batch);
+}
+
+/**
+ * WS 推送入口：缓冲 + 自适应节流。窗口按实测上报间隔与当前节点数动态算，
+ * 空闲后第一帧即时出（leading）、窗口内的后续推送合并到尾部一次出（trailing）。
+ */
+function enqueueWsSamples(samples: WsSample[]): void {
+  if (samples.length === 0) return;
+  observeReportInterval(samples);
+  for (const sample of samples) wsPendingSamples.push(sample);
+
+  const windowMs = resolveWsFlushWindowMs(wsReportIntervalEmaMs, state.order.length);
+  const sinceLast = Date.now() - wsLastFlushAt;
+  if (sinceLast >= windowMs) {
+    flushWsSampleBuffer();
+  } else if (wsFlushTimer == null) {
+    wsFlushTimer = window.setTimeout(flushWsSampleBuffer, windowMs - sinceLast);
+  }
+}
+
+function resetWsCoalesceState(): void {
+  if (wsFlushTimer != null) {
+    window.clearTimeout(wsFlushTimer);
+    wsFlushTimer = null;
+  }
+  wsPendingSamples = [];
+  wsLastFlushAt = 0;
+  wsReportIntervalEmaMs = 0;
+  wsLastTsByServer.clear();
+}
+
 /** 实时样本落到已知节点上；未知节点等下一次全量刷新再出现。 */
 function applyWsSamples(samples: WsSample[]) {
   if (samples.length === 0) return;
@@ -806,7 +910,7 @@ function updateWsSubscriptions(baseByServerId: Map<string, string>) {
     connectionsByBase.set(
       base,
       createWsConnection(base, ids, {
-        onBatch: applyWsSamples,
+        onBatch: enqueueWsSamples,
         onAvailabilityChange: (available) => {
           if (available) connectedBases.add(base);
           else connectedBases.delete(base);
@@ -924,6 +1028,7 @@ function stopStore() {
   syncController?.abort();
   syncController = null;
   closeAllConnections();
+  resetWsCoalesceState();
   for (const timer of [pollTimer, fullRefreshTimer, onlineTimer]) {
     if (timer != null) window.clearInterval(timer);
   }
