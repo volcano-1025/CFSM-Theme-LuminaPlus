@@ -245,13 +245,14 @@ export function useHomepagePingHistoryRecovery(
   taskIds: readonly number[],
   enabled: boolean,
   online: boolean,
+  uptimeSeconds: number | null = null,
 ): void {
   const samples = usePingSamples(uuid, enabled);
   const taskSignature = taskIds.join(",");
   useEffect(() => {
     if (!enabled || !online || taskIds.length === 0) return;
-    void requestHomepagePingRecovery(uuid, taskIds);
-  }, [enabled, online, samples, taskIds, taskSignature, uuid]);
+    void requestHomepagePingRecovery(uuid, taskIds, Date.now(), uptimeSeconds);
+  }, [enabled, online, samples, taskIds, taskSignature, uptimeSeconds, uuid]);
 }
 
 /**

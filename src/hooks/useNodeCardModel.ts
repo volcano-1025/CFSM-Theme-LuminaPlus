@@ -100,6 +100,7 @@ export function useNodeCardModel(
     recoveryTaskIds,
     hasRealHomepagePingBinding,
     metrics?.online === true,
+    metrics?.uptime ?? null,
   );
   const now = useHourlyClock();
   const ping = useFakePingFallback(

@@ -5,12 +5,14 @@ import type { CarrierKey, CarrierPingSnapshot } from "@/types/cfsm";
 
 /** 首页只在发现明显断档时补一次一小时真实历史。 */
 export const HOMEPAGE_RECOVERY_HISTORY_HOURS = 1;
+/** 首页恢复检查的时间窗口。 */
+export const HOMEPAGE_RECOVERY_WINDOW_MS = 60 * 60 * 1000;
 /** 后端首页窗口的正常网格步长：30 格覆盖一小时。 */
 export const HOMEPAGE_PING_GRID_STEP_MS = 120_000;
+/** 窗口两端至少缺四格才认为是值得查历史的断档。 */
+const BOUNDARY_GAP_THRESHOLD_MS = HOMEPAGE_PING_GRID_STEP_MS * 4;
 /** 内部至少缺两格才认为是值得查历史的断档。 */
 const INTERNAL_GAP_THRESHOLD_MS = HOMEPAGE_PING_GRID_STEP_MS * 2;
-/** 末尾点可能天然偏离网格几分钟，只有更大的尾部空洞才触发。 */
-const TRAILING_GAP_THRESHOLD_MS = HOMEPAGE_PING_GRID_STEP_MS * 4;
 /** 成功回填后短时间内刷新页面也不重复打 D1。 */
 export const HOMEPAGE_RECOVERY_SUCCESS_TTL_MS = 10 * 60_000;
 /** 请求失败时的短暂冷却，避免异常后端造成紧密重试。 */
@@ -86,43 +88,76 @@ function sortedMeasurementTimes(
   samples: readonly PingLiveSample[],
   carrier: CarrierKey,
   now: number,
+  windowStart: number,
 ): number[] {
   return [...new Set(
     samples
       .filter(
         (sample) =>
           sample.time > 0 &&
+          sample.time >= windowStart &&
           sample.time <= now &&
-          now - sample.time <= 60 * 60 * 1000 &&
           hasCarrierMeasurement(sample, carrier),
       )
       .map((sample) => sample.time),
   )].sort((left, right) => left - right);
 }
 
+function hasReliableUptime(uptimeSeconds: number | null | undefined): uptimeSeconds is number {
+  return (
+    typeof uptimeSeconds === "number" &&
+    Number.isFinite(uptimeSeconds) &&
+    uptimeSeconds > 0
+  );
+}
+
+function resolveWindowStart(
+  now: number,
+  uptimeSeconds: number | null | undefined,
+): number {
+  const historyStart = now - HOMEPAGE_RECOVERY_WINDOW_MS;
+  if (!hasReliableUptime(uptimeSeconds)) return historyStart;
+  // boot_time 已由后端映射成 uptime；节点刚启动时，启动前的空白不是丢失的历史。
+  return Math.max(historyStart, now - uptimeSeconds * 1000);
+}
+
+function shouldCheckLeadingGap(uptimeSeconds: number | null | undefined): boolean {
+  // 已知节点运行不足一小时：leading 区间包含启动前的时间，不把它当成缺口。
+  // uptime 不可用时不虚构启动时间，按完整窗口检查，才能覆盖旧节点只剩一两个点的情况。
+  return !hasReliableUptime(uptimeSeconds) || uptimeSeconds >= HOMEPAGE_RECOVERY_WINDOW_MS / 1000;
+}
+
 /**
  * 判断某条线路是否有「本地实测也没有填上」的明显空洞。
  *
- * 中间断档按两格触发；最右端额外放宽到四格，因为后端窗口的最后一个“当前”点
- * 本来就可能和上一格相差 4～5 分钟。没有至少两个有效点时不猜测历史存在，避免给
- * 尚未开始上报的节点平白增加请求。
+ * 窗口两端和样本之间分别检查：窗口起点到首点的 leading gap、相邻点之间的 internal gap、
+ * 以及当前时间到末点的 trailing gap。已知 uptime 且节点运行不足一小时的部分不检查 leading，
+ * 避免把启动前的时间误判成缺失；没有任何有效点时不猜测历史存在，避免给新节点平白增加请求。
  */
 export function hasSignificantPingGap(
   samples: readonly PingLiveSample[],
   carrier: CarrierKey,
   now = Date.now(),
+  uptimeSeconds?: number | null,
 ): boolean {
-  const times = sortedMeasurementTimes(samples, carrier, now);
-  if (times.length < 2) return false;
+  const windowStart = resolveWindowStart(now, uptimeSeconds);
+  const times = sortedMeasurementTimes(samples, carrier, now, windowStart);
+  if (times.length === 0) return false;
+
+  if (
+    shouldCheckLeadingGap(uptimeSeconds) &&
+    times[0]! - windowStart > BOUNDARY_GAP_THRESHOLD_MS
+  ) {
+    return true;
+  }
+
+  if (now - times[times.length - 1]! > BOUNDARY_GAP_THRESHOLD_MS) {
+    return true;
+  }
 
   for (let index = 1; index < times.length; index += 1) {
     const gap = times[index]! - times[index - 1]!;
-    const isTrailing = index === times.length - 1;
-    if (
-      gap > (isTrailing ? TRAILING_GAP_THRESHOLD_MS : INTERNAL_GAP_THRESHOLD_MS)
-    ) {
-      return true;
-    }
+    if (gap > INTERNAL_GAP_THRESHOLD_MS) return true;
   }
   return false;
 }
@@ -131,13 +166,16 @@ export function shouldRecoverHomepagePing(
   samples: readonly PingLiveSample[],
   taskIds: readonly number[],
   now = Date.now(),
+  uptimeSeconds?: number | null,
 ): boolean {
   const carriers = new Set<CarrierKey>();
   for (const taskId of taskIds) {
     const carrier = CARRIER_TASK_BY_ID.get(taskId)?.key;
     if (carrier) carriers.add(carrier);
   }
-  return [...carriers].some((carrier) => hasSignificantPingGap(samples, carrier, now));
+  return [...carriers].some((carrier) =>
+    hasSignificantPingGap(samples, carrier, now, uptimeSeconds),
+  );
 }
 
 function isCoolingDown(uuid: string, now: number): boolean {
@@ -164,8 +202,17 @@ export async function requestHomepagePingRecovery(
   uuid: string,
   taskIds: readonly number[],
   now = Date.now(),
+  uptimeSeconds?: number | null,
 ): Promise<boolean> {
-  if (!uuid || !shouldRecoverHomepagePing(getPingHistorySnapshot(uuid), taskIds, now)) {
+  if (
+    !uuid ||
+    !shouldRecoverHomepagePing(
+      getPingHistorySnapshot(uuid),
+      taskIds,
+      now,
+      uptimeSeconds,
+    )
+  ) {
     return false;
   }
 
