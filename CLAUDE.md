@@ -29,10 +29,11 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 硬约束（违反会出事）
 
-- **首页不许发起 `/api/history/all` 请求**：逐节点查历史会让后端 D1 读行翻几十倍。首页的数据
-  只能来自 WebSocket 实时值和 `/api/servers` 的 `servers[].ping|loss` 窗口。详情页读历史是
-  允许的，它那份结果**回灌**首页缓冲也是允许的（`backfillPingBuffer`，不额外发请求）——
-  约束在「谁发起请求」，不在「用了历史数据」。
+- **首页默认不发起 `/api/history/all` 请求**：正常节点的数据只能来自 WebSocket 实时值和
+  `/api/servers` 的 `servers[].ping|loss` 窗口，不能按节点/线路批量查历史。唯一例外是首页合并
+  后的序列出现明显空洞、且本地 WSS 无法补齐时，才允许对该异常节点按需查一次一小时历史；请求
+  必须经过 `homepagePingRecovery` 的节点级 in-flight 去重、成功 TTL 和失败冷却。详情页读历史
+  仍然允许，它那份结果**回灌**首页缓冲也是允许的（`backfillPingBuffer`，不额外发请求）。
 - **产物目录只能有 `index.html` 和 `assets/`**，CI 有校验步骤。
 - **产物分支（`dist` / `dist-preview`）只追加提交，绝不 force-push**：主题商店的
   `versions[].commitid` 和用户锁定的 SHA 指向历史提交，重写会让旧版本用户失效。
@@ -104,6 +105,10 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   详情页查回来的历史会回灌这个缓冲（`api.ts` 的 `backfillPingBuffer` → `seedMeasuredHistory`，
   挂在 `fetchHistoryRows` 回调上，不额外发请求），所以**「点开过详情页的节点数据更准」是预期
   行为**，不是 bug。
+- **首页首屏明显空洞才按需回填**：展示首页 Ping 的在线节点如果合并后的某条线路出现内部至少
+  两格、或末尾至少四格的断档，且 WSS 本地点没有补齐，才触发一次一小时 `/api/history/all`。
+  四条线路一次一起回灌；正常完整窗口、只有末尾几分钟网格偏移、未展示 Ping 的节点都不查。
+  成功节点在浏览器侧记 10 分钟，刷新或三网卡片重复挂载也不会重复打后端。
 - **采样与计权：一次探测记一个样本，每个样本按它代表的时长计权**（`recordPingSample` /
   `assignWeights`）。这两处各栽过一次，合起来把丢包率抬高过一半：
   - 采样：探针 60 秒才测一次、WS 每 2 秒把同一结果重推一遍，所以「值变了」等价于「新探测落地」，
@@ -142,8 +147,9 @@ v1.2.7 这一版把首页延迟/丢包的数据口径整个翻过来了（窗口
 不对」的反馈，先按那里写的方法抓两个接口对齐打表，别直接改代码。**
 
 待后端：`/api/servers` 窗口里的 `loss` 是单次探测结果而不是那一格的聚合，首页在浏览器没实测
-覆盖的时段无论怎么算都对不上详情页（实测同一小时 1.07% vs 5.52%）。已建议站长找后端作者把它
-改成与 `/api/history/all` 同源的聚合值；前端这边没有别的办法了。
+覆盖的时段仍可能对不上详情页（实测同一小时 1.07% vs 5.52%）。前端现在只在明显空洞时按节点
+补一次真实一小时历史；没有空洞时仍不查，长期口径要彻底一致仍需后端把窗口改成与
+`/api/history/all` 同源的聚合值。
 
 待确认：v1.2.4 的「Ping 图表辅助线支持触屏拖动」只在单测和桌面端验过（坐标换算 + 色带竖线
 跟随），真机触感还没人试过 —— 用户反馈说不跟手就先查 `.u-over` 的 `touch-action`。

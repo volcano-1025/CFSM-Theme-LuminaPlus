@@ -557,7 +557,7 @@ export function historyRowsToPingRecords(rows: HistoryRow[], client: string): Pi
  * 历史行 → 首页延迟条用的样本。
  *
  * 用户点开详情页时本来就查了这台节点的历史，顺手把真实采样回灌进首页缓冲 ——
- * 不额外打后端（首页自己仍然不许查历史，见 README 的硬约束），但看过的节点，
+ * 不额外打后端（调用方已经拿到了历史；首页异常恢复也复用同一回调），但看过/回填过的节点，
  * 首页那一小时就不必再靠 `/api/servers` 那份向后填充的窗口凑。
  */
 export function historyRowsToPingSamples(rows: HistoryRow[]): PingLiveSample[] {

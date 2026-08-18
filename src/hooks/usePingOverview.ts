@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useMinuteClock } from "@/hooks/useClock";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
+import { requestHomepagePingRecovery } from "@/services/homepagePingRecovery";
 import {
   getPingHistorySnapshot,
   subscribePingHistory,
@@ -26,8 +27,9 @@ import type { NodeViewMode } from "@/utils/themeSettings";
  * 首页延迟数据。
  *
  * 数据来自 `@/services/pingLiveStore` 的实时缓冲区（由 `/api/servers` 与 WebSocket 推送
- * 累积），不查历史接口 —— 逐节点查 `/api/history/all` 会让后端 D1 读行翻几十倍。
- * 实例详情页的 Ping 图表仍然读历史，那是用户主动打开、单节点一次的请求。
+ * 累积）。正常节点不查历史；只有合并后的序列出现明显空洞、且当前页面确实展示该节点的
+ * 首页 Ping 时，才由 `useHomepagePingHistoryRecovery` 对该节点按需补一次一小时真实历史。
+ * 详情页的历史仍然复用同一套缓存与回灌逻辑。
  */
 
 // 首页延迟图表默认显示 30 个 bucket：与后端一小时探测窗口的 30 个槽位一一对应，
@@ -231,6 +233,25 @@ function usePingSamples(uuid: string, enabled: boolean): readonly PingLiveSample
     [enabled, uuid],
   );
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * 首页历史恢复只订阅原始合并序列，不参与展示计算。
+ * `requestHomepagePingRecovery` 在模块级做节点去重，所以三网模式和 React StrictMode 都只会
+ * 共享同一个请求；没有明显空洞的节点不会发请求。
+ */
+export function useHomepagePingHistoryRecovery(
+  uuid: string,
+  taskIds: readonly number[],
+  enabled: boolean,
+  online: boolean,
+): void {
+  const samples = usePingSamples(uuid, enabled);
+  const taskSignature = taskIds.join(",");
+  useEffect(() => {
+    if (!enabled || !online || taskIds.length === 0) return;
+    void requestHomepagePingRecovery(uuid, taskIds);
+  }, [enabled, online, samples, taskIds, taskSignature, uuid]);
 }
 
 /**

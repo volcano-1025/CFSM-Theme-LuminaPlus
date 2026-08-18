@@ -6,6 +6,7 @@ import {
   buildPingBuckets,
   useNodePingOverview,
   useNodePingOverviewLines,
+  useHomepagePingHistoryRecovery,
   usePingBuckets,
   useSelectedTaskId,
   withLiveLatency,
@@ -89,6 +90,16 @@ export function useNodeCardModel(
     () =>
       multiPingActive || hasHomepagePingTaskBinding(uuid, homepagePingBindings),
     [homepagePingBindings, multiPingActive, uuid],
+  );
+  const recoveryTaskIds = useMemo(
+    () => (multiPingActive ? homepageMultiPingTaskIds : [selectedTaskId]),
+    [homepageMultiPingTaskIds, multiPingActive, selectedTaskId],
+  );
+  useHomepagePingHistoryRecovery(
+    uuid,
+    recoveryTaskIds,
+    hasRealHomepagePingBinding,
+    metrics?.online === true,
   );
   const now = useHourlyClock();
   const ping = useFakePingFallback(
