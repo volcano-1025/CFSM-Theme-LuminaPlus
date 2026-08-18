@@ -36,16 +36,23 @@ export interface PingLiveSample {
 type Listener = () => void;
 
 /**
- * 两次采样之间的最小间隔。
+ * 采样口径：**一次探测结果记一个样本**。
  *
- * WebSocket 每 5 秒推一批，但探针默认 60 秒才测一次 ping，多数批次里的 ping 值是重复的。
- * 首页图表又是按 150 秒一格聚合的，采样比 ~75 秒更密不会带来任何可见差异，
- * 却会让固定长度的缓冲区只覆盖几分钟。这里按 50 秒节流：60 秒上报时每次上报采一个点，
- * 30 秒上报时隔一次采一个点，每格仍有 2~3 个样本。
+ * WebSocket 每两秒推一帧，但探针默认 60 秒才测一次 ping —— 帧里的 ping 值只在新探测落地时
+ * 才变。所以「值变了就记」正好等于「每次探测记一次」，只留一个很小的下限防抖。
+ *
+ * 早先是「值没变 50 秒记一个、值变了 20 秒就放行」，这个不对称会在每次丢包的**切换处**多记
+ * 一个样本 —— 丢包的样本被系统性多记，丢包率随之偏高。构造实测：60 次探测（其中 8 次丢包
+ * 16.7%）被记成 78 个样本，真值 2.50% 算成 3.85%，高估 54%。
  */
-const MIN_SAMPLE_GAP_MS = 50_000;
-/** 值发生变化时允许更快记录，但仍要防住 5 秒一批的抖动。 */
-const MIN_CHANGED_SAMPLE_GAP_MS = 20_000;
+const MIN_CHANGED_SAMPLE_GAP_MS = 5_000;
+/**
+ * 值没变时的心跳采样：一格（2 分钟）留一个点。
+ *
+ * 单纯「值变了才记」会让长期平稳的节点一小时只有一两个样本，柱子没法画（样本向后延续有上限）。
+ * 心跳只补密度，不影响加权 —— 权重是按样本代表的时长算的。
+ */
+const MIN_SAMPLE_GAP_MS = 120_000;
 /** 50 秒一个样本时，96 条覆盖 80 分钟，足够铺满一小时的图表。 */
 const MAX_SAMPLES_PER_NODE = 96;
 /** 抽稀后相邻样本的最小间隔：一小时铺满上限条数，保证覆盖整段窗口。 */
@@ -311,9 +318,8 @@ function mergeWindowWithLocal(
   local: readonly PingLiveSample[],
   now: number,
 ): readonly PingLiveSample[] {
-  void now;
-  if (window.length === 0) return local;
-  if (local.length === 0) return window;
+  if (window.length === 0) return assignWeights(local, DEFAULT_WINDOW_STEP_MS, now);
+  if (local.length === 0) return assignWeights(window, resolveWindowStepMs(window), now);
 
   const step = resolveWindowStepMs(window);
   const cadence = resolveCadenceMs(local);
@@ -348,33 +354,29 @@ function mergeWindowWithLocal(
   }
   for (; cursor < local.length; cursor += 1) out.push(local[cursor]!);
 
-  return assignWeights(out, step);
+  return assignWeights(out, step, now);
 }
 
 /**
  * 每个样本按**它代表多长时间**计权，而不是「一条算一条」。
  *
- * 两处偏差都靠它抹平：① 后端窗口 2 分钟一个点、本地 20~50 秒一个，按条数平均会偏向密的
- * 那一段；② 本地这边 `recordPingSample` 对「值变了」放行得更快（20 秒 vs 50 秒），于是有丢包
- * 的样本比没丢包的更容易被记下来，按条数平均会把丢包率抬高（构造场景实测：真值 1.9% 会算成
- * 2.8%）。取到前后邻居的中点作为这个样本代表的时长，两种偏差就都没了。
+ * 时长的口径必须和图表一致：**一个样本代表「到下一次采样为止」的那段时间**（`buildPingBuckets`
+ * 就是这么铺格子的），不是「到前后邻居的中点」。差别在采样疏密不均的地方会翻车 —— 探针 60 秒
+ * 一次探测，平稳时每 2 分钟才记一个心跳，丢包那一次却会立刻记下来：按中点算，这个只代表 60 秒
+ * 的丢包样本会拿到 90 秒的权重，丢包率凭空高一半（栽过一次，构造实测高估 71%）。
+ *
+ * 它同时抹平两处偏差：① 后端窗口 2 分钟一个点、本地样本疏密不定，按条数平均会偏向密的那段；
+ * ② 采样规则本身对「值变了」放行更快，丢包样本更容易被记下。
  */
 function assignWeights(
   samples: readonly PingLiveSample[],
   stepMs: number,
+  now: number,
 ): PingLiveSample[] {
   return samples.map((sample, index) => {
-    const previous = samples[index - 1];
     const next = samples[index + 1];
-    const span =
-      previous && next
-        ? (next.time - previous.time) / 2
-        : next
-          ? next.time - sample.time
-          : previous
-            ? sample.time - previous.time
-            : stepMs;
-    // 首尾和异常间隔都夹在合理范围内，免得一个孤点顶掉半张图的权重。
+    const span = (next ? next.time : now) - sample.time;
+    // 末尾那个样本和异常间隔都夹在合理范围内，免得一个孤点顶掉半张图的权重。
     const bounded = Math.min(Math.max(span, stepMs / 8), stepMs * 4);
     return { ...sample, weight: Math.max(1, Math.round((WEIGHT_SCALE * bounded) / stepMs)) };
   });

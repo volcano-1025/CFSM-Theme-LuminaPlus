@@ -39,12 +39,13 @@ describe("recordPingSample", () => {
     expect(samples.map((sample) => sample.ping.ct)).toEqual([30, 32]);
   });
 
-  it("throttles the 5s websocket batches that repeat the same reading", () => {
-    // 探针 60 秒才测一次，推送却是 5 秒一批：重复值不该占满缓冲区。
-    for (let i = 0; i < 12; i++) {
-      recordPingSample("node-a", NOW + i * 5_000, ping({ ct: 30 }));
+  it("重复推同一个探测结果时只留心跳采样", () => {
+    // 探针 60 秒才测一次，WS 每 2 秒推一帧：同一个结果被推 30 次，不该记 30 个样本。
+    for (let i = 0; i < 90; i++) {
+      recordPingSample("node-a", NOW + i * 2_000, ping({ ct: 30 }));
     }
 
+    // 180 秒 / 2 分钟一个心跳 → 首个 + 之后每 2 分钟。
     expect(getPingHistorySnapshot("node-a")).toHaveLength(2);
   });
 
@@ -55,16 +56,24 @@ describe("recordPingSample", () => {
     expect(getPingHistorySnapshot("node-a").map((s) => s.ping.ct)).toEqual([30, 80]);
   });
 
-  it("still ignores a changed reading inside the same push batch", () => {
+  it("新的探测结果一到就记，不再等一个节流窗口", () => {
+    // 「值变了」等价于「新探测落地了」，压着不记会让丢包那一次错位到下一格。
     recordPingSample("node-a", NOW, ping({ ct: 30 }));
-    recordPingSample("node-a", NOW + 5_000, ping({ ct: 80 }));
+    recordPingSample("node-a", NOW + 6_000, ping({ ct: 80 }));
+
+    expect(getPingHistorySnapshot("node-a").map((s) => s.ping.ct)).toEqual([30, 80]);
+  });
+
+  it("同一帧里的抖动仍旧挡住", () => {
+    recordPingSample("node-a", NOW, ping({ ct: 30 }));
+    recordPingSample("node-a", NOW + 2_000, ping({ ct: 80 }));
 
     expect(getPingHistorySnapshot("node-a")).toHaveLength(1);
   });
 
-  it("keeps a full hour of samples at the default 60s report interval", () => {
+  it("值一直在变时每次探测都记，覆盖整整一小时", () => {
     for (let i = 0; i < 60; i++) {
-      recordPingSample("node-a", NOW + i * 60_000, ping({ ct: 30 }));
+      recordPingSample("node-a", NOW + i * 60_000, ping({ ct: 30 + i }));
     }
 
     const samples = getPingHistorySnapshot("node-a");
@@ -177,7 +186,7 @@ describe("seedPingHistory", () => {
     // 而同一时段浏览器攒到的是真测量 —— 有真的就不该显示填出来的。
     seedPingHistory("node-a", backendWindow());
     for (let i = 0; i < 20; i += 1) {
-      recordPingSample("node-a", NOW - 20 * 60_000 + i * 60_000, ping({ ct: 999 }));
+      recordPingSample("node-a", NOW - 20 * 60_000 + i * 60_000, ping({ ct: 999 + i }));
     }
 
     const samples = getPingHistorySnapshot("node-a");
@@ -186,7 +195,7 @@ describe("seedPingHistory", () => {
       (sample) => sample.time > NOW - 19 * 60_000 && sample.time < NOW - 2 * 60_000,
     );
     expect(inside.length).toBeGreaterThan(10);
-    expect(inside.every((sample) => sample.ping.ct === 999)).toBe(true);
+    expect(inside.every((sample) => (sample.ping.ct ?? 0) >= 999)).toBe(true);
     // 更早的那 40 分钟浏览器没开着，仍旧由窗口顶着。
     expect(samples.some((sample) => sample.time < NOW - 30 * 60_000)).toBe(true);
   });
@@ -195,16 +204,16 @@ describe("seedPingHistory", () => {
     // 一小时里只有最近 10 分钟有本地样本，其余靠窗口 —— 窗口点要抵几个本地点，
     // 否则「本地那段」的样本条数是「窗口那段」的好几倍，丢包率会往它偏。
     for (let i = 0; i < 15; i += 1) {
-      recordPingSample("node-a", NOW - 10 * 60_000 + i * 60_000, ping({ ct: 777 }));
+      recordPingSample("node-a", NOW - 10 * 60_000 + i * 60_000, ping({ ct: 777 + i }));
     }
     seedPingHistory("node-a", backendWindow());
 
     const samples = getPingHistorySnapshot("node-a");
-    const fromLocal = samples.filter((sample) => sample.ping.ct === 777);
-    const fromWindow = samples.filter((sample) => sample.ping.ct !== 777);
+    const fromLocal = samples.filter((sample) => (sample.ping.ct ?? 0) >= 777);
+    const fromWindow = samples.filter((sample) => (sample.ping.ct ?? 0) < 777);
     expect(fromLocal.length).toBeGreaterThan(5);
     expect(fromWindow.length).toBeGreaterThan(20);
-    // 窗口 2 分钟一格、本地 1 分钟一个 → 一个窗口点抵两个本地点。
+    // 窗口 2 分钟一格、本地实测 1 分钟一个 → 一个窗口点抵两个本地点。
     // 取中间的样本比：首尾和交界处的样本代表的时长是单边算的，本来就不齐。
     const mid = (list: typeof samples) => list[Math.floor(list.length / 2)]?.weight ?? 0;
     expect(mid(fromWindow) / mid(fromLocal)).toBeCloseTo(2, 1);
@@ -352,6 +361,42 @@ describe("seedPingHistory", () => {
     ]);
 
     expect(getPingHistorySnapshot("node-a").map((s) => s.ping.ct)).toEqual([20]);
+  });
+});
+
+describe("采样与计权的准确度", () => {
+  /** 探针 60 秒一次探测，WS 每 2 秒把同一个结果重推一遍；60 次里 8 次丢包。 */
+  function feedProbes() {
+    let lossy = 0;
+    for (let i = 0; i < 60; i += 1) {
+      const isLossy = i % 7 === 3;
+      if (isLossy) lossy += 1;
+      for (let frame = 0; frame < 30; frame += 1) {
+        recordPingSample(
+          "node-a",
+          NOW - (59 - i) * 60_000 + frame * 2_000,
+          ping({ ct: isLossy ? 260 : 240, lossCt: isLossy ? 16.7 : 0 }),
+        );
+      }
+    }
+    return (lossy * 16.7) / 60;
+  }
+
+  it("丢包率贴近按时间的真值，不被采样规则带偏", () => {
+    // 早先「值没变 50 秒记一个、值变了 20 秒就放行」会在每次丢包的切换处多记一个样本，
+    // 加上按中点计权，真值 2.50% 会算成 3.85%（高估 54%）。
+    const truth = feedProbes();
+    const loss = buildPingOverviewItem("node-a", 1, getPingHistorySnapshot("node-a")).loss ?? 0;
+
+    expect(Math.abs(loss - truth) / truth).toBeLessThan(0.15);
+  });
+
+  it("重复帧不进缓冲区：一小时的样本数与探测次数同量级", () => {
+    feedProbes();
+
+    // 1800 帧、60 次探测 —— 样本数该在几十，不是上千也不是个位数。
+    expect(getPingHistorySnapshot("node-a").length).toBeLessThan(70);
+    expect(getPingHistorySnapshot("node-a").length).toBeGreaterThan(20);
   });
 });
 
