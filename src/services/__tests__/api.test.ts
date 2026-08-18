@@ -8,9 +8,11 @@ import {
   getPublic,
   getServersSnapshot,
   normalizeHistoryHours,
+  refreshPingHistory,
 } from "@/services/api";
 import { resetApiBaseCache } from "@/services/cfsm/config";
 import { ApiRequestError } from "@/services/cfsm/http";
+import { getPingHistorySnapshot } from "@/services/pingLiveStore";
 
 const ORIGIN = "https://status.example.com";
 
@@ -313,5 +315,74 @@ describe("getPingRecords", () => {
     const { records } = await getPingRecords("node-a", 6);
 
     expect(records.map((record) => record.task_id)).toEqual([1, 3]);
+  });
+});
+
+describe("refreshPingHistory", () => {
+  it("查一次 hours=1 并把结果回灌延迟缓冲区", async () => {
+    const now = Date.now();
+    fetchMock.mockImplementation(
+      jsonReply([
+        historyRow({ timestamp: now - 120_000, ping_ct: 40 }),
+        historyRow({ timestamp: now - 60_000, ping_ct: 41 }),
+      ]),
+    );
+
+    const result = await refreshPingHistory(["node-a"]);
+
+    expect(result).toEqual({ requested: 1, succeeded: 1, failed: 0 });
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain("/api/history/all");
+    expect(url).toContain("hours=1");
+    // 回灌走的是详情页那条通道，缓冲区里应该能读到刚拉回来的采样。
+    expect(getPingHistorySnapshot("node-a").length).toBeGreaterThan(0);
+  });
+
+  it("去重节点 id，一台只发一次", async () => {
+    fetchMock.mockImplementation(jsonReply([historyRow({ timestamp: Date.now() })]));
+
+    const result = await refreshPingHistory(["node-a", "node-a", "node-b", ""]);
+
+    expect(result.requested).toBe(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("单台失败不影响其余节点回灌", async () => {
+    fetchMock.mockImplementation(async (input: unknown) => {
+      if (String(input).includes("id=node-b")) return jsonResponse({ error: "boom" }, 500);
+      return jsonResponse([historyRow({ timestamp: Date.now() })]);
+    });
+
+    const result = await refreshPingHistory(["node-a", "node-b", "node-c"]);
+
+    expect(result).toEqual({ requested: 3, succeeded: 2, failed: 1 });
+  });
+
+  it("并发有上限，节点多也不会一次全打出去", async () => {
+    const ids = Array.from({ length: 12 }, (_, index) => `node-${index}`);
+    let inFlight = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+
+    fetchMock.mockImplementation(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise<void>((resolve) => release.push(resolve));
+      inFlight -= 1;
+      return jsonResponse([historyRow({ timestamp: Date.now() })]);
+    });
+
+    const pending = refreshPingHistory(ids);
+    // 放行到全部结束：每轮把已经排队的请求一起放掉。
+    for (let round = 0; round < ids.length + 4; round += 1) {
+      await Promise.resolve();
+      while (release.length > 0) release.shift()?.();
+      await Promise.resolve();
+    }
+    const result = await pending;
+
+    expect(result.requested).toBe(12);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
   });
 });

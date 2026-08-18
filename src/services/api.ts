@@ -355,6 +355,71 @@ async function fetchHistoryRows(
   return request;
 }
 
+/** 手动刷新首页延迟条时的并发上限：节点多的站点别一次把请求全打出去。 */
+const PING_HISTORY_REFRESH_CONCURRENCY = 4;
+/** 手动刷新只拉一小时：首页延迟条本来就只画一小时，多拉的行是白读。 */
+const PING_HISTORY_REFRESH_HOURS = 1;
+
+export interface PingHistoryRefreshResult {
+  requested: number;
+  succeeded: number;
+  failed: number;
+}
+
+/**
+ * 手动刷新首页延迟条：逐台拉一小时历史回灌本地缓冲。
+ *
+ * **这是首页唯一允许发起 `/api/history/all` 的入口，且只能由用户点击触发。**
+ * 自动轮询仍然禁止 —— 读行量差 60 倍：按线上实测（7 台、上报间隔 30/60 秒）点一次约 780 行，
+ * 而每分钟自动拉一次是每小时 4.7 万行。后端对 1 小时档有 60 秒服务端缓存（响应带 `X-Cache`），
+ * 连点几下不会真的重复读库。
+ *
+ * 效果等同于「把每台节点的详情页都点开一遍」：走的是同一个 `fetchHistoryRows` →
+ * `backfillPingBuffer` 通道，不是另一套取数逻辑。
+ *
+ * 绕开前端那 20 秒缓存（`cache: false`）—— 用户按刷新就是想要新的，拿缓存糊弄没有意义。
+ */
+export async function refreshPingHistory(
+  serverIds: readonly string[],
+  options?: RequestOptions,
+): Promise<PingHistoryRefreshResult> {
+  const ids = [...new Set(serverIds.filter((id) => typeof id === "string" && id.length > 0))];
+  if (ids.length === 0) return { requested: 0, succeeded: 0, failed: 0 };
+
+  let cursor = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  async function worker(): Promise<void> {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      const serverId = ids[index];
+      if (serverId === undefined) return;
+      try {
+        await fetchHistoryRows(serverId, PING_HISTORY_REFRESH_HOURS, {
+          ...options,
+          cache: false,
+        });
+        succeeded += 1;
+      } catch {
+        // 单台失败不该拖垮整批：某台节点历史查不到（刚加入、分区 id 没建好）时，
+        // 其余节点照常回灌。
+        failed += 1;
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(PING_HISTORY_REFRESH_CONCURRENCY, ids.length) },
+      () => worker(),
+    ),
+  );
+
+  return { requested: ids.length, succeeded, failed };
+}
+
 export async function getLoadRecords(
   uuid: string,
   hours = 6,

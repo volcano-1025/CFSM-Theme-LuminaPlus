@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Grid3x3, LayoutGrid, List, Monitor, Palette, Rows3, Settings, SlidersHorizontal, Sun, Moon } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Grid3x3, LayoutGrid, List, Monitor, Palette, RefreshCw, Rows3, Settings, SlidersHorizontal, Sun, Moon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useViewMode } from "@/hooks/useViewMode";
 import { useNodeStoreStatus } from "@/hooks/useNode";
 import { useAuth } from "@/hooks/useAuth";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
+import { usePingHistoryRefresh, type PingHistoryRefreshState } from "@/hooks/usePingHistoryRefresh";
 import { getAdminUrl } from "@/services/cfsm/config";
 import type { NodeViewMode } from "@/utils/themeSettings";
 import { clsx } from "clsx";
@@ -23,6 +24,34 @@ const VIEW_MODE_META: Record<NodeViewMode, { icon: typeof LayoutGrid; label: str
   list: { icon: List, label: "列表视图" },
 };
 
+/**
+ * 刷新按钮的悬浮说明。
+ *
+ * 这个按钮会逐台发 `/api/history/all`，成本不该藏着 —— 标题里把节点数写出来，
+ * 点之前就知道要打多少个请求。
+ */
+function buildRefreshTitle({
+  status,
+  nodeCount,
+  lastResult,
+  lastRefreshedAt,
+}: PingHistoryRefreshState): string {
+  if (status === "loading") return `正在拉取 ${nodeCount} 台节点最近 1 小时的延迟历史…`;
+  if (status === "error") {
+    return lastResult && lastResult.succeeded > 0
+      ? `部分节点刷新失败（${lastResult.failed}/${lastResult.requested}），点击重试`
+      : "刷新失败，点击重试";
+  }
+
+  const base = `刷新延迟数据：拉取 ${nodeCount} 台节点最近 1 小时的真实采样`;
+  if (lastRefreshedAt == null) return base;
+
+  const at = new Date(lastRefreshedAt).toLocaleTimeString("zh-CN", { hour12: false });
+  const partial =
+    lastResult && lastResult.failed > 0 ? `，${lastResult.failed} 台失败` : "";
+  return `${base}\n上次刷新 ${at}${partial}`;
+}
+
 const APPEARANCE_OPTIONS = [
   { value: "light", icon: Sun, label: "浅色" },
   { value: "system", icon: Monitor, label: "跟随系统" },
@@ -39,6 +68,7 @@ export function FloatingControls({
   const { data: me } = useAuth();
   const themeSettings = useThemeSettings();
   const { failureStreak } = useNodeStoreStatus();
+  const pingRefresh = usePingHistoryRefresh();
   const [collapsed, setCollapsed] = useState(true);
   const [colorsOpen, setColorsOpen] = useState(false);
   const [colorsMounted, setColorsMounted] = useState(false);
@@ -58,6 +88,8 @@ export function FloatingControls({
     onExpandedChange?.(false);
     return () => onExpandedChange?.(false);
   }, [onExpandedChange]);
+
+  const refreshTitle = buildRefreshTitle(pingRefresh);
 
   const toggleControls = () => {
     // 收起快捷栏时同时结束子面板状态，避免下次展开时调色盘自动复现。
@@ -161,6 +193,23 @@ export function FloatingControls({
               </a>
             )}
           </div>
+          <button
+            type="button"
+            className={clsx(
+              "control-button floating-controls-refresh grid h-9 w-9 place-items-center",
+              pingRefresh.status === "error" && "is-refresh-error",
+            )}
+            aria-label="刷新延迟数据"
+            aria-busy={pingRefresh.status === "loading"}
+            title={refreshTitle}
+            disabled={pingRefresh.nodeCount === 0 || pingRefresh.status === "loading"}
+            onClick={pingRefresh.refresh}
+          >
+            <RefreshCw
+              size={16}
+              className={pingRefresh.status === "loading" ? "floating-controls-refresh-spin" : undefined}
+            />
+          </button>
           <button
             type="button"
             className="control-button floating-controls-trigger grid h-9 w-9 place-items-center"
