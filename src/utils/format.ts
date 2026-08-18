@@ -181,10 +181,21 @@ function inferPlainTagColor(label: string): string {
 }
 
 /** 把 `tag1<color>;tag2<color2>` 解析成 [{ label, color }]。 */
+/**
+ * 分隔符同时认逗号和分号。
+ *
+ * CF-Server-Monitor 后台那个「标签」输入框的提示写的是**英文逗号割开**，而这份代码从 Komari
+ * 主题移植过来时只切分号 —— 于是后台按提示填的 `边缘,高带宽` 会整条变成一个标签。
+ * 两种都认：分号是 Komari 的习惯（从那边迁过来的站点还留着），逗号是本后端的正式约定。
+ * 全角 `，；` 一并认 —— 这个框的语义就是「用符号分隔」，中文输入法误打全角在所难免，
+ * 而标签名里本来也不该出现分隔符。
+ */
+const TAG_SEPARATORS = /[;,；，]/;
+
 export function parseTags(raw: string | undefined | null): Array<{ label: string; color: string }> {
   if (!raw) return [];
   return raw
-    .split(";")
+    .split(TAG_SEPARATORS)
     .map((s) => s.trim())
     .filter(Boolean)
     .map((item) => {

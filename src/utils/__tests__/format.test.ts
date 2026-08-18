@@ -165,6 +165,31 @@ describe("parseTags", () => {
     ]);
   });
 
+  it("按逗号分隔：后台那个输入框的提示就是「英文逗号割开」", () => {
+    expect(parseTags("边缘,高带宽").map((tag) => tag.label)).toEqual([
+      "边缘",
+      "高带宽",
+    ]);
+  });
+
+  it("分号、全角逗号、混用都认", () => {
+    // 分号是 Komari 的习惯，全角是中文输入法误打 —— 标签名里本来也不该出现分隔符。
+    expect(parseTags("A;B，C；D, E").map((tag) => tag.label)).toEqual([
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+    ]);
+  });
+
+  it("逗号分隔的标签也能带 <color> 后缀", () => {
+    expect(parseTags("VIP<RED>,Pro<Blue>")).toEqual([
+      { label: "VIP", color: "red" },
+      { label: "Pro", color: "blue" },
+    ]);
+  });
+
   it("infers colors for plain tags by known keywords", () => {
     expect(parseTags("CN2GIA")).toEqual([{ label: "CN2GIA", color: "blue" }]);
     expect(parseTags("4837")).toEqual([{ label: "4837", color: "green" }]);
