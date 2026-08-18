@@ -304,7 +304,7 @@ describe("seedPingHistory", () => {
   });
 
   it("keeps full-hour coverage when dense live samples would overflow the cap", () => {
-    // 线上实测的状态：WSS 下本地约 20 秒攒一个，很快顶满上限却只覆盖最近约半小时；
+    // 线上实测的状态：密集的本地样本很快顶满上限，却只覆盖最近约半小时；
     // 若超限时直接砍最老的，就会把后端窗口里较早的点整段丢掉 —— 柱子左半段空、右半段有。
     // 90 个点、20 秒一个，正好覆盖最近 30 分钟（未触及上限，触发点在合并之后）。
     for (let index = 0; index < 90; index += 1) {

@@ -95,7 +95,7 @@ describe("buildPingOverviewItem", () => {
   });
 
   it("infers the sample interval from the data instead of assuming one", () => {
-    // 后端窗口是 2 分钟一个点，本地累积约 50 秒一个；柱子落位要跟着实际间隔走。
+    // 后端窗口是 2 分钟一个点，本地实测跟着探测节奏走；柱子落位要跟着实际间隔走。
     const backend = buildPingOverviewItem("node-a", 1, [
       sample(6, { ct: 30 }),
       sample(4, { ct: 31 }),

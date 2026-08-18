@@ -35,14 +35,14 @@ import type { NodeViewMode } from "@/utils/themeSettings";
 const MAX_VISIBLE_HOMEPAGE_PING_BUCKETS = 30;
 /** 样本间隔推不出来时的兜底，用于把样本投影到 bucket。 */
 const DEFAULT_SAMPLE_INTERVAL_MS = 60_000;
-/** 后端窗口是 2 分钟一个槽位，本地累积约 50 秒一个；限制在这个区间内。 */
+/** 后端窗口是 2 分钟一个槽位，本地实测最密时探测间隔（约 60 秒）一个；限制在这个区间内。 */
 const MIN_SAMPLE_INTERVAL_MS = 20_000;
 const MAX_SAMPLE_INTERVAL_MS = 300_000;
 /** 一个样本最多向后延续多久；超过就认为数据真的断了，让图表留空。 */
 const MAX_SAMPLE_HOLD_MS = 300_000;
 
 /**
- * 样本间隔由数据自己决定：后端一小时窗口是 120 秒一个点，本地累积约 50 秒一个。
+ * 样本间隔由数据自己决定：后端一小时窗口是 120 秒一个点，本地实测跟着探测节奏走（约 60 秒）。
  * 写死一个值会让其中一种来源的柱子落位偏移。
  */
 function resolveSampleIntervalMs(samples: readonly PingLiveSample[]): number {
