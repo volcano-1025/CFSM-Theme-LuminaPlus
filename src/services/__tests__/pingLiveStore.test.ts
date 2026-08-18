@@ -9,6 +9,7 @@ import {
   subscribePingHistory,
   type PingLiveSample,
 } from "@/services/pingLiveStore";
+import { buildPingOverviewItem } from "@/hooks/usePingOverview";
 import { EMPTY_CARRIER_PING, type CarrierPingSnapshot } from "@/types/cfsm";
 
 const NOW = Date.UTC(2026, 6, 17, 12, 0);
@@ -121,16 +122,36 @@ describe("recordPingSample", () => {
   });
 });
 
-describe("刷新后不留痕", () => {
-  it("缓冲区只在内存里：刷新后从后端窗口重来，不接上次会话的样本", () => {
-    // 本地点只是拿来补窗口缺口的，跨刷新留着反而会把上次会话的陈旧样本混进来。
+describe("persistence", () => {
+  it("restores the buffer after a reload so the chart is not blank", () => {
+    // 本地样本是主数据源（后端窗口是向后填充出来的低保真数据），刷新就丢等于每次刷新
+    // 都退回那份填充值。
+    recordPingSample("node-a", NOW - 60_000, ping({ ct: 30, lossCt: 0 }));
+    recordPingSample("node-a", NOW, ping({ ct: 31, lossCt: 5 }));
+    vi.advanceTimersByTime(20_000);
+
+    resetPingLiveStore();
+    const restored = getPingHistorySnapshot("node-a");
+
+    expect(restored.map((sample) => sample.ping.ct)).toEqual([30, 31]);
+    expect(restored.at(-1)?.ping.lossCt).toBe(5);
+  });
+
+  it("does not restore samples that have expired while away", () => {
     recordPingSample("node-a", NOW, ping({ ct: 30 }));
     vi.advanceTimersByTime(20_000);
 
     resetPingLiveStore();
+    vi.setSystemTime(NOW + 3 * 60 * 60_000);
 
     expect(getPingHistorySnapshot("node-a")).toEqual([]);
-    expect(window.localStorage.length).toBe(0);
+  });
+
+  it("survives a corrupted cache entry", () => {
+    window.localStorage.setItem("cfsm-luminaplus:ping-live:v1", "{not json");
+    resetPingLiveStore();
+
+    expect(getPingHistorySnapshot("node-a")).toEqual([]);
   });
 });
 
@@ -151,17 +172,42 @@ describe("seedPingHistory", () => {
     expect(samples.at(-1)!.time - samples[0]!.time).toBe(29 * 120_000);
   });
 
-  it("窗口铺满时一个本地点都不掺，首页口径与 /api/servers 一致", () => {
-    // 两种来源的疏密和算法都不一样，混在一格里会让丢包的加权平均随本地点越攒越多而漂移。
+  it("本地有实测的时段用本地值，窗口那份填充值让位", () => {
+    // 线上实测：窗口是拿最近一次结果向后填充的，某节点前 48 分钟是同一个数字重复，
+    // 而同一时段浏览器攒到的是真测量 —— 有真的就不该显示填出来的。
     seedPingHistory("node-a", backendWindow());
-    recordPingSample("node-a", NOW - 30 * 60_000, ping({ ct: 99 }));
-    recordPingSample("node-a", NOW + 60_000, ping({ ct: 98 }));
+    for (let i = 0; i < 20; i += 1) {
+      recordPingSample("node-a", NOW - 20 * 60_000 + i * 60_000, ping({ ct: 999 }));
+    }
+
+    const samples = getPingHistorySnapshot("node-a");
+    // 本地覆盖到的那一段（首尾各留一格给边界）里，不该再有窗口的填充值。
+    const inside = samples.filter(
+      (sample) => sample.time > NOW - 19 * 60_000 && sample.time < NOW - 2 * 60_000,
+    );
+    expect(inside.length).toBeGreaterThan(10);
+    expect(inside.every((sample) => sample.ping.ct === 999)).toBe(true);
+    // 更早的那 40 分钟浏览器没开着，仍旧由窗口顶着。
+    expect(samples.some((sample) => sample.time < NOW - 30 * 60_000)).toBe(true);
+  });
+
+  it("浏览器没覆盖到的时段仍旧用窗口，并按疏密配权重", () => {
+    // 一小时里只有最近 10 分钟有本地样本，其余靠窗口 —— 窗口点要抵几个本地点，
+    // 否则「本地那段」的样本条数是「窗口那段」的好几倍，丢包率会往它偏。
+    for (let i = 0; i < 15; i += 1) {
+      recordPingSample("node-a", NOW - 10 * 60_000 + i * 60_000, ping({ ct: 777 }));
+    }
     seedPingHistory("node-a", backendWindow());
 
     const samples = getPingHistorySnapshot("node-a");
-    expect(samples).toHaveLength(30);
-    expect(samples.map((sample) => sample.ping.ct)).not.toContain(99);
-    expect(samples.map((sample) => sample.ping.ct)).not.toContain(98);
+    const fromLocal = samples.filter((sample) => sample.ping.ct === 777);
+    const fromWindow = samples.filter((sample) => sample.ping.ct !== 777);
+    expect(fromLocal.length).toBeGreaterThan(5);
+    expect(fromWindow.length).toBeGreaterThan(20);
+    // 窗口 2 分钟一格、本地 1 分钟一个 → 一个窗口点抵两个本地点。
+    // 取中间的样本比：首尾和交界处的样本代表的时长是单边算的，本来就不齐。
+    const mid = (list: typeof samples) => list[Math.floor(list.length / 2)]?.weight ?? 0;
+    expect(mid(fromWindow) / mid(fromLocal)).toBeCloseTo(2, 1);
   });
 
   it("窗口里没值的那一格，用本地实测点顶替", () => {
@@ -192,26 +238,17 @@ describe("seedPingHistory", () => {
     expect(samples[25]?.ping.ct).toBeNull();
   });
 
-  it("补进空洞的点按网格步长抽稀，不把那一段的权重放大", () => {
-    // 丢包率按样本条数加权，本地点 30 秒一个、窗口 2 分钟一个：原样塞进去那段会拿到
-    // 四倍权重，卡片丢包率被它拖着走。
-    const holey = backendWindow().filter((_, index) => index < 12 || index > 16);
-    for (let i = 0; i < 40; i += 1) {
-      const time = NOW - 36 * 60_000 + i * 30_000;
-      if (time > NOW - 26 * 60_000) break;
-      recordPingSample("node-a", time, ping({ ct: 45, lossCt: 30 }));
+  it("权重让丢包率按时间算，而不是按样本条数算", () => {
+    // 半小时窗口(0% 丢包) + 半小时本地实测(30% 丢包)。本地 40 秒一个、窗口 2 分钟一个，
+    // 不配权重的话本地那半段占 3/4 条数，丢包率会算成约 22%；按时间应该是 15%。
+    for (let i = 0; i < 45; i += 1) {
+      recordPingSample("node-a", NOW - 30 * 60_000 + i * 40_000, ping({ ct: 45, lossCt: 30 }));
     }
+    seedPingHistory("node-a", backendWindow());
 
-    seedPingHistory("node-a", holey);
-
-    const filled = getPingHistorySnapshot("node-a").filter(
-      (sample) => sample.ping.lossCt === 30,
-    );
-    // 空洞 12 分钟、网格 2 分钟一格 —— 补进来的点数与格子数同量级，而不是几十个。
-    expect(filled.length).toBeLessThanOrEqual(6);
-    for (let i = 1; i < filled.length; i += 1) {
-      expect(filled[i]!.time - filled[i - 1]!.time).toBeGreaterThanOrEqual(120_000);
-    }
+    const item = buildPingOverviewItem("node-a", 1, getPingHistorySnapshot("node-a"));
+    expect(item.loss).toBeGreaterThan(12);
+    expect(item.loss).toBeLessThan(18);
   });
 
   it("窗口末点迟迟不更新时，用本地点补到现在", () => {

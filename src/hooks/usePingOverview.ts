@@ -128,14 +128,21 @@ export function buildPingOverviewItem(
     out.push({
       time: sample.time,
       value,
-      count: 1,
+      // 权重由合并时定：后端窗口的点比本地样本疏几倍，要抵几份，否则丢包的加权平均
+      // 会往密的那一段偏（见 pingLiveStore 的 mergeWindowWithLocal）。
+      count: sample.weight ?? 1,
       loss: sampleLoss,
     });
     if (value > max) max = value;
     if (value >= 0) lastValue = value;
     // 后端没给丢包值时不参与平均，否则会把「不知道」显示成 0%。
     if (typeof sampleLoss === "number" || value < 0) {
-      const counts = resolvePingSampleCounts({ value, count: 1, loss: sampleLoss });
+      // 权重同上：两个来源疏密不同，按条数平均会偏向密的那一段。
+      const counts = resolvePingSampleCounts({
+        value,
+        count: sample.weight ?? 1,
+        loss: sampleLoss,
+      });
       lostSum += counts.lost;
       lossWeight += counts.total;
     }

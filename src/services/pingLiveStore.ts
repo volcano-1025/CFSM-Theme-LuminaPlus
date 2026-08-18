@@ -24,6 +24,13 @@ import type { CarrierPingSnapshot } from "@/types/cfsm";
 export interface PingLiveSample {
   time: number;
   ping: CarrierPingSnapshot;
+  /**
+   * 这个样本在丢包加权平均里算几份。合并时才算出来，不落盘。
+   *
+   * 两个来源疏密差好几倍（后端窗口 2 分钟一个、本地 20~50 秒一个），而丢包率是按**样本条数**
+   * 加权的。不配权重的话，密的那段说话就大声几倍，卡片上的丢包率会被它拖着走。
+   */
+  weight?: number;
 }
 
 type Listener = () => void;
@@ -45,9 +52,19 @@ const MAX_SAMPLES_PER_NODE = 96;
 const MIN_THINNED_GAP_MS = (60 * 60 * 1000) / MAX_SAMPLES_PER_NODE;
 /** 后端窗口的网格步长推不出来时的兜底：实测是 2 分钟一格。 */
 const DEFAULT_WINDOW_STEP_MS = 120_000;
-/** 窗口相邻两点间隔超过步长的几倍，才算「缺了一段」、需要本地点来补。 */
-const GAP_FILL_STEP_FACTOR = 2;
+/** 本地样本间隔推不出来时的兜底。 */
+const DEFAULT_LOCAL_CADENCE_MS = 40_000;
+/**
+ * 权重的基数：一个「满格」（step 那么长的时间）算几份。
+ *
+ * `resolvePingSampleCounts` 会把权重取整，基数太小会被舍入带偏（1 : 1.5 取成 1 : 2，
+ * 凭空多给一方三成），取 8 让常见的疏密比都能落在整数附近。
+ */
+const WEIGHT_SCALE = 8;
 const SAMPLE_TTL_MS = 60 * 60 * 1000;
+const MAX_PERSISTED_NODES = 100;
+const STORAGE_KEY = "cfsm-luminaplus:ping-live:v1";
+const PERSIST_DEBOUNCE_MS = 15_000;
 
 const EMPTY_SAMPLES: readonly PingLiveSample[] = [];
 
@@ -58,6 +75,8 @@ const windowByUuid = new Map<string, readonly PingLiveSample[]>();
 /** 对外可见的合并结果，引用稳定（`useSyncExternalStore` 要求）。 */
 const seriesByUuid = new Map<string, readonly PingLiveSample[]>();
 const listenersByUuid = new Map<string, Set<Listener>>();
+let hydrated = false;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function hasAnyValue(ping: CarrierPingSnapshot): boolean {
   return (
@@ -87,10 +106,20 @@ function thinSamples(samples: readonly PingLiveSample[]): PingLiveSample[] {
     if (!last || last.time - sample.time >= MIN_THINNED_GAP_MS) kept.push(sample);
   }
   kept.reverse();
-  // 抽稀后仍超上限（样本比一小时还密时）才退回保留最新的那批。
-  return kept.length > MAX_SAMPLES_PER_NODE
-    ? kept.slice(-MAX_SAMPLES_PER_NODE)
-    : kept;
+  if (kept.length <= MAX_SAMPLES_PER_NODE) return kept;
+
+  // 还超上限就加大间隔再抽一轮。这里**不能** `slice(-N)` —— 那会整段砍掉最老的，
+  // 而最老的那半段往往正是后端窗口独有、本地没覆盖到的部分，砍掉柱子就左半段空。
+  const span = kept[kept.length - 1]!.time - kept[0]!.time;
+  const gap = Math.max(MIN_THINNED_GAP_MS, span / MAX_SAMPLES_PER_NODE);
+  const sparse: PingLiveSample[] = [];
+  for (let index = kept.length - 1; index >= 0; index -= 1) {
+    const sample = kept[index]!;
+    const last = sparse[sparse.length - 1];
+    if (!last || last.time - sample.time >= gap) sparse.push(sample);
+  }
+  sparse.reverse();
+  return sparse;
 }
 
 function samePing(a: CarrierPingSnapshot, b: CarrierPingSnapshot): boolean {
@@ -104,6 +133,127 @@ function samePing(a: CarrierPingSnapshot, b: CarrierPingSnapshot): boolean {
     a.lossCm === b.lossCm &&
     a.lossBd === b.lossBd
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * 持久化
+ * ------------------------------------------------------------------ */
+
+/** 紧凑格式：[time, ct, cu, cm, bd, lossCt, lossCu, lossCm, lossBd] */
+type PersistedSample = [
+  number,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+];
+
+function toPersisted(sample: PingLiveSample): PersistedSample {
+  const { ping } = sample;
+  return [
+    sample.time,
+    ping.ct,
+    ping.cu,
+    ping.cm,
+    ping.bd,
+    ping.lossCt,
+    ping.lossCu,
+    ping.lossCm,
+    ping.lossBd,
+  ];
+}
+
+function fromPersisted(entry: unknown): PingLiveSample | null {
+  if (!Array.isArray(entry) || entry.length < 9) return null;
+  const time = Number(entry[0]);
+  if (!Number.isFinite(time) || time <= 0) return null;
+
+  const value = (index: number): number | null => {
+    const raw = entry[index];
+    if (raw == null) return null;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  return {
+    time,
+    ping: {
+      ct: value(1),
+      cu: value(2),
+      cm: value(3),
+      bd: value(4),
+      lossCt: value(5),
+      lossCu: value(6),
+      lossCm: value(7),
+      lossBd: value(8),
+    },
+  };
+}
+
+function hydrate(): void {
+  if (hydrated) return;
+  hydrated = true;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return;
+    const nodes = (parsed as { nodes?: unknown }).nodes;
+    if (!nodes || typeof nodes !== "object") return;
+
+    const now = Date.now();
+    for (const [uuid, entries] of Object.entries(nodes as Record<string, unknown>)) {
+      if (!Array.isArray(entries)) continue;
+      const samples = entries
+        .map(fromPersisted)
+        .filter((sample): sample is PingLiveSample => sample != null && isFresh(sample, now))
+        .sort((left, right) => left.time - right.time);
+      if (samples.length > 0) samplesByUuid.set(uuid, samples);
+    }
+  } catch {
+    // 缓存损坏时当作没有历史，重新累积即可。
+  }
+}
+
+function persistNow(): void {
+  try {
+    const now = Date.now();
+    const nodes: Record<string, PersistedSample[]> = {};
+    let count = 0;
+    for (const [uuid, samples] of samplesByUuid) {
+      if (count >= MAX_PERSISTED_NODES) break;
+      const fresh = samples.filter((sample) => isFresh(sample, now));
+      if (fresh.length === 0) continue;
+      nodes[uuid] = thinSamples(fresh).map(toPersisted);
+      count += 1;
+    }
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 1, savedAt: now, nodes }));
+  } catch {
+    // 配额用尽或隐私模式：内存里的缓冲区照常工作，只是刷新后要重新累积。
+  }
+}
+
+function schedulePersist(): void {
+  if (persistTimer != null) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    persistNow();
+  }, PERSIST_DEBOUNCE_MS);
+}
+
+if (typeof window !== "undefined") {
+  // 关闭/切走标签页时立刻落盘，避免丢掉最后一个防抖窗口内的样本。
+  window.addEventListener("pagehide", () => {
+    if (persistTimer != null) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    if (samplesByUuid.size > 0) persistNow();
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -127,82 +277,107 @@ function resolveWindowStepMs(window: readonly PingLiveSample[]): number {
   return gaps[Math.floor(gaps.length / 2)]!;
 }
 
+/** 本地样本的实际疏密（相邻间隔中位数）。 */
+function resolveCadenceMs(samples: readonly PingLiveSample[]): number {
+  const gaps: number[] = [];
+  for (let index = 1; index < samples.length; index += 1) {
+    const gap = samples[index]!.time - samples[index - 1]!.time;
+    if (gap > 0) gaps.push(gap);
+  }
+  if (gaps.length === 0) return DEFAULT_LOCAL_CADENCE_MS;
+  gaps.sort((left, right) => left - right);
+  return gaps[Math.floor(gaps.length / 2)]!;
+}
+
 /**
- * 后端窗口为准，本地累积只补缺口。
+ * 本地实测优先，后端窗口只补浏览器还没覆盖到的时段。
  *
- * 两个来源的口径不一样：窗口是后端按 2 分钟网格算好的，本地是 WS 当前值 20~50 秒攒一个。
- * 早先按时间戳取并集，于是同一格里混着两种样本 —— 丢包按样本数加权平均之后，首页既不等于
- * 后端窗口自己算的、也不等于详情页历史算的，而且本地点越攒越多、比例还会随开着页面的时间漂移
- * （用户看到的「首页数据不对」多半是这个）。
+ * 一度反过来做过（窗口权威、本地只补缺口），线上数据证明那是错的：`/api/servers` 的窗口
+ * 并不是把探测结果聚合出来的，而是**拿最近一次结果向后填充**。线上实测某节点的一小时窗口里，
+ * 前 24 格（48 分钟）是同一个数字重复，只有最后 6 格是真值；同一时段的历史接口有 114 行真实
+ * 采样，延迟从 235 到 1283 都有、丢包 5.5%，而按窗口算只有 1.1%。也就是说窗口是低保真的
+ * 填充产物，浏览器自己从 WebSocket 攒的样本才是真测量 —— 有真的就不该用填出来的。
  *
- * 现在只有窗口自己缺了一段（相邻两点间隔超过步长的 {@link GAP_FILL_STEP_FACTOR} 倍）才用本地点
- * 去填那段：正常情况下一个本地点都不参与，首页口径与 `/api/servers` 完全一致，柱子跟着窗口
- * 每 2 分钟动一次；窗口停止滑动时（实测会铺到 35 分钟前就停、末尾直接追加一个当前点），
- * 中间那段空洞仍由本地点补上 —— 这正是当初要取并集的原因，不能直接丢掉。
+ * 于是：
+ * - 本地样本原样保留（保留全部细节，尖峰不会被抹平）；
+ * - 窗口点只在附近半格内没有本地样本时才要 —— 那是浏览器打开之前、或标签页被挂起的时段；
+ * - 窗口点配一个权重（抵几个本地点），否则一小时里「本地那半段」的样本条数是「窗口那半段」的
+ *   三四倍，丢包率会随页面开着的时长往本地那半段偏 —— 当初那个漂移就是这么来的。
+ *
+ * 权重只影响丢包/延迟的加权平均，不影响柱子画在哪一格。
  */
 function mergeWindowWithLocal(
   window: readonly PingLiveSample[],
   local: readonly PingLiveSample[],
   now: number,
 ): readonly PingLiveSample[] {
+  void now;
   if (window.length === 0) return local;
   if (local.length === 0) return window;
 
   const step = resolveWindowStepMs(window);
-  const minGapMs = step * GAP_FILL_STEP_FACTOR;
-  // 缺口两端各留半格，免得补进来的点和网格点挤在同一格里重复计权。
-  const margin = step / 2;
+  const cadence = resolveCadenceMs(local);
+  // 一段本地样本之间隔得比这还远，就当中间断了（标签页被挂起、或刚打开页面），
+  // 那段仍旧交给窗口。取 cadence 的两倍，偶尔慢一拍不算断。
+  const maxLocalGap = Math.max(step, cadence * 2);
+
   const out: PingLiveSample[] = [];
   let cursor = 0;
-
-  /**
-   * 取 (from, to) 之间的本地样本，并抽稀到网格步长 —— 一格最多留一个。
-   *
-   * 丢包率是按**样本条数**加权平均的，而本地点 20~50 秒一个、窗口 2 分钟一个。原样塞进空洞，
-   * 那段时间就会拿到三四倍于窗口格子的权重，卡片上的丢包率被这一段拖着走（实测：某段真实
-   * 10 分钟 30% 丢包，按时间应显示 5.0%，不抽稀会显示 6.6%）。补上空洞是为了别让图缺一块，
-   * 不是为了让这段说话更大声。
-   *
-   * 游标只前进，窗口点是升序的。
-   */
-  const takeLocal = (from: number, to: number): PingLiveSample[] => {
-    const picked: PingLiveSample[] = [];
-    while (cursor < local.length && local[cursor]!.time <= from) cursor += 1;
-    while (cursor < local.length && local[cursor]!.time < to) {
-      const sample = local[cursor]!;
-      const last = picked[picked.length - 1];
-      if (!last || sample.time - last.time >= step) picked.push(sample);
+  for (const point of window) {
+    while (cursor < local.length && local[cursor]!.time <= point.time) {
+      out.push(local[cursor]!);
       cursor += 1;
     }
-    return picked;
-  };
-
-  for (const [index, point] of window.entries()) {
-    const previous = index > 0 ? window[index - 1]! : null;
-    if (previous && point.time - previous.time > minGapMs) {
-      out.push(...takeLocal(previous.time + margin, point.time - margin));
-    }
-    // 「格子在、值是 null」的槽位（后端这轮探测没出结果）：图表本来会真的留空 —— 那是对的，
-    // 可本地要是正好在那段时间实测到了值，留空就成了自找的空洞（线上看到的「柱子中间缺一格」
-    // 就是它，v1.2.6 靠并集顺手盖住了）。所以这种槽位允许被邻近的本地样本顶替；
-    // 邻近也没有本地样本时仍旧留空，不编数据。
-    if (!hasAnyValue(point.ping)) {
-      // 顶替这一格，所以只取一个点（`takeLocal` 已按步长抽稀，半格宽度内至多一个），
-      // 免得一格换来两三个点、把这一格的权重放大。
-      const replacement = takeLocal(point.time - margin, point.time + margin);
-      if (replacement.length > 0) {
-        out.push(replacement[0]!);
-        continue;
-      }
+    // 这一刻的前后都有本地样本、且中间没断，就说明浏览器实测覆盖到了这里。
+    const before = cursor > 0 ? local[cursor - 1]! : null;
+    const after = cursor < local.length ? local[cursor]! : null;
+    const covered =
+      before != null && after != null && after.time - before.time <= maxLocalGap;
+    if (covered) continue;
+    // 「格子在、值是 null」的槽位（后端那轮探测没出结果）：图表对明确没值的槽位是真的
+    // 留空的，附近只要有一个本地实测点就让它顶上，不然平白空一格。
+    if (
+      !hasAnyValue(point.ping) &&
+      [before, after].some(
+        (near) => near != null && Math.abs(near.time - point.time) <= step,
+      )
+    ) {
+      continue;
     }
     out.push(point);
   }
+  for (; cursor < local.length; cursor += 1) out.push(local[cursor]!);
 
-  // 窗口末点到「现在」之间也可能缺一段（后端快照迟迟不更新），同样用本地点补。
-  const last = window[window.length - 1]!;
-  if (now - last.time > minGapMs) out.push(...takeLocal(last.time + margin, now + margin));
+  return assignWeights(out, step);
+}
 
-  return out;
+/**
+ * 每个样本按**它代表多长时间**计权，而不是「一条算一条」。
+ *
+ * 两处偏差都靠它抹平：① 后端窗口 2 分钟一个点、本地 20~50 秒一个，按条数平均会偏向密的
+ * 那一段；② 本地这边 `recordPingSample` 对「值变了」放行得更快（20 秒 vs 50 秒），于是有丢包
+ * 的样本比没丢包的更容易被记下来，按条数平均会把丢包率抬高（构造场景实测：真值 1.9% 会算成
+ * 2.8%）。取到前后邻居的中点作为这个样本代表的时长，两种偏差就都没了。
+ */
+function assignWeights(
+  samples: readonly PingLiveSample[],
+  stepMs: number,
+): PingLiveSample[] {
+  return samples.map((sample, index) => {
+    const previous = samples[index - 1];
+    const next = samples[index + 1];
+    const span =
+      previous && next
+        ? (next.time - previous.time) / 2
+        : next
+          ? next.time - sample.time
+          : previous
+            ? sample.time - previous.time
+            : stepMs;
+    // 首尾和异常间隔都夹在合理范围内，免得一个孤点顶掉半张图的权重。
+    const bounded = Math.min(Math.max(span, stepMs / 8), stepMs * 4);
+    return { ...sample, weight: Math.max(1, Math.round((WEIGHT_SCALE * bounded) / stepMs)) };
+  });
 }
 
 function computeSeries(uuid: string, now: number): readonly PingLiveSample[] {
@@ -247,6 +422,7 @@ export function recordPingSample(
   if (!uuid || !Number.isFinite(time) || time <= 0) return;
   if (!hasAnyValue(ping)) return;
 
+  hydrate();
   const previous = samplesByUuid.get(uuid) ?? EMPTY_SAMPLES;
   const last = previous[previous.length - 1];
   if (last) {
@@ -263,6 +439,7 @@ export function recordPingSample(
   const next = [...previous.filter((sample) => isFresh(sample, now)), { time, ping }];
   samplesByUuid.set(uuid, thinSamples(next));
   refreshSeries(uuid, now);
+  schedulePersist();
 }
 
 function sameSeries(a: readonly PingLiveSample[], b: readonly PingLiveSample[]): boolean {
@@ -270,7 +447,15 @@ function sameSeries(a: readonly PingLiveSample[], b: readonly PingLiveSample[]):
   for (let i = 0; i < a.length; i++) {
     const left = a[i]!;
     const right = b[i]!;
-    if (left.time !== right.time || !samePing(left.ping, right.ping)) return false;
+    // 权重也要比：窗口到达后本地样本可能一个没变，变的只是权重（原先只有本地、
+    // 现在要和窗口按时长配比），漏比就会把新算的加权序列判成「没变」而丢掉。
+    if (
+      left.time !== right.time ||
+      left.weight !== right.weight ||
+      !samePing(left.ping, right.ping)
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -287,6 +472,7 @@ export function seedPingHistory(
 ): void {
   if (!uuid || window.length === 0) return;
 
+  hydrate();
   const now = Date.now();
   const fresh = [...window]
     .filter((sample) => isFresh(sample, now))
@@ -301,6 +487,7 @@ export function seedPingHistory(
 }
 
 export function getPingHistorySnapshot(uuid: string): readonly PingLiveSample[] {
+  hydrate();
   const cached = seriesByUuid.get(uuid);
   if (cached) return cached;
   // 还没算过合并结果时补算并缓存，但不能 emit
@@ -328,8 +515,11 @@ export function subscribePingHistory(uuid: string, listener: Listener): () => vo
 /** 节点被删除后清掉它的缓冲区，避免无限增长。 */
 export function retainPingNodes(uuids: Iterable<string>): void {
   const keep = new Set(uuids);
+  let changed = false;
   for (const uuid of [...samplesByUuid.keys()]) {
-    if (!keep.has(uuid)) samplesByUuid.delete(uuid);
+    if (keep.has(uuid)) continue;
+    samplesByUuid.delete(uuid);
+    changed = true;
   }
   for (const uuid of [...windowByUuid.keys()]) {
     if (!keep.has(uuid)) windowByUuid.delete(uuid);
@@ -337,6 +527,7 @@ export function retainPingNodes(uuids: Iterable<string>): void {
   for (const uuid of [...seriesByUuid.keys()]) {
     if (!keep.has(uuid)) seriesByUuid.delete(uuid);
   }
+  if (changed) schedulePersist();
 }
 
 /** 测试用。 */
@@ -345,4 +536,9 @@ export function resetPingLiveStore(): void {
   windowByUuid.clear();
   seriesByUuid.clear();
   listenersByUuid.clear();
+  hydrated = false;
+  if (persistTimer != null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
 }

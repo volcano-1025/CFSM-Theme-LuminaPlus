@@ -27,17 +27,14 @@ function formatLatencyBucketSummary(bucket: PingOverviewBucket | null) {
   return bucket.total > 0 ? "失败" : "无样本";
 }
 
-function formatLossBucketSummary(
-  bucket: PingOverviewBucket | null,
-  separator = " ",
-) {
+function formatLossBucketSummary(bucket: PingOverviewBucket | null) {
   if (!bucket) return "—";
   if (bucket.offline) return "离线";
   if (bucket.total <= 0 || bucket.loss == null) return "无样本";
-  // 后端每个采样点给的是丢包百分比而不是"丢了几个包"，写成 x/y 会误导，
-  // 这里只显示百分比与参与聚合的采样点数。
-  const count = Math.max(1, Math.round(bucket.total));
-  return `${trimFixed(bucket.loss, 1)}%${separator}${count} 次采样`;
+  // 只显示百分比：后端给的本来就是丢包百分比而不是"丢了几个包"，写成 x/y 会误导；
+  // 而 total 现在是**加权**样本数（后端窗口的点比本地实测疏几倍，要抵几份），
+  // 已经不等于"采了几次"，报出来只会让人算不明白。
+  return `${trimFixed(bucket.loss, 1)}%`;
 }
 
 export function formatHealthBucketTooltip(
@@ -48,6 +45,6 @@ export function formatHealthBucketTooltip(
   const summary =
     kind === "latency"
       ? formatLatencyBucketSummary(bucket)
-      : formatLossBucketSummary(bucket, " · ");
+      : formatLossBucketSummary(bucket);
   return window ? `${window} · ${summary}` : summary;
 }
