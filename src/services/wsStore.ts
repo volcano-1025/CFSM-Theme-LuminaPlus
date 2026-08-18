@@ -80,8 +80,13 @@ interface NodeTrafficTrend {
 
 /** WebSocket 断开时的轮询节奏。 */
 const POLL_REFRESH_INTERVAL_MS = 5_000;
-/** WebSocket 正常时仍定期全量对齐，用于捕获元数据变更与节点增删。 */
-const FULL_REFRESH_INTERVAL_MS = 30_000;
+/**
+ * WebSocket 正常时仍定期全量对齐，用于捕获元数据变更与节点增删。
+ *
+ * 后端 `/api/servers` 自己带 120 秒缓存（实测：24 秒内 5 次请求返回完全相同的字节，
+ * 加随机 query 参数也绕不过，说明缓存在 Worker 里而不是 CDN），拉得比缓存周期还密纯属白打。
+ */
+const FULL_REFRESH_INTERVAL_MS = 60_000;
 /** 离线是"超过阈值没有上报"，没有事件驱动，只能定时重算。 */
 const ONLINE_RECHECK_INTERVAL_MS = 15_000;
 const SERVERS_REQUEST_TIMEOUT_MS = 8_000;

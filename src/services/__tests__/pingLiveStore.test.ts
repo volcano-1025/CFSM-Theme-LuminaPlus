@@ -5,6 +5,7 @@ import {
   recordPingSample,
   resetPingLiveStore,
   retainPingNodes,
+  seedMeasuredHistory,
   seedPingHistory,
   subscribePingHistory,
   type PingLiveSample,
@@ -358,6 +359,53 @@ describe("seedPingHistory", () => {
     seedPingHistory("node-a", [
       { time: NOW - 3 * 60 * 60_000, ping: ping({ ct: 10 }) },
       { time: NOW, ping: ping({ ct: 20 }) },
+    ]);
+
+    expect(getPingHistorySnapshot("node-a").map((s) => s.ping.ct)).toEqual([20]);
+  });
+});
+
+describe("seedMeasuredHistory", () => {
+  function backendWindowFilled(): PingLiveSample[] {
+    // 线上那种「向后填充」的窗口：整段同一个值、丢包全 0。
+    return Array.from({ length: 30 }, (_, index) => ({
+      time: NOW - (29 - index) * 120_000,
+      ping: ping({ ct: 240, lossCt: 0 }),
+    }));
+  }
+
+  it("详情页看过的节点，首页改用历史里的真实采样", () => {
+    seedPingHistory("node-a", backendWindowFilled());
+    const rows: PingLiveSample[] = Array.from({ length: 60 }, (_, index) => ({
+      time: NOW - (59 - index) * 60_000,
+      ping: ping({ ct: index % 5 === 0 ? 700 : 238, lossCt: index % 5 === 0 ? 20 : 0 }),
+    }));
+
+    seedMeasuredHistory("node-a", rows);
+
+    const item = buildPingOverviewItem("node-a", 1, getPingHistorySnapshot("node-a"));
+    // 窗口说一整小时零丢包，历史里五分之一的采样丢 20%。
+    expect(item.loss).toBeGreaterThan(2);
+  });
+
+  it("同一时刻以历史为准，并且不动更新的实时样本", () => {
+    recordPingSample("node-a", NOW - 30 * 60_000, ping({ ct: 111 }));
+    recordPingSample("node-a", NOW, ping({ ct: 222 }));
+
+    seedMeasuredHistory("node-a", [
+      { time: NOW - 30 * 60_000, ping: ping({ ct: 333 }) },
+    ]);
+
+    const values = getPingHistorySnapshot("node-a").map((sample) => sample.ping.ct);
+    expect(values).toContain(333);
+    expect(values).not.toContain(111);
+    expect(values).toContain(222);
+  });
+
+  it("丢掉超过一小时的历史行，不撑爆缓冲区", () => {
+    seedMeasuredHistory("node-a", [
+      { time: NOW - 3 * 60 * 60_000, ping: ping({ ct: 10 }) },
+      { time: NOW - 10 * 60_000, ping: ping({ ct: 20 }) },
     ]);
 
     expect(getPingHistorySnapshot("node-a").map((s) => s.ping.ct)).toEqual([20]);

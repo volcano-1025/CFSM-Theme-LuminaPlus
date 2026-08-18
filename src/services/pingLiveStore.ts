@@ -488,6 +488,40 @@ export function seedPingHistory(
   refreshSeries(uuid, now);
 }
 
+/**
+ * 把详情页查回来的历史采样灌进本地缓冲。
+ *
+ * 和 WS 攒的样本同级（都是真测量），按时间戳取并集、同一时刻以历史为准 —— 历史是后端那张表
+ * 里的原始记录，比 WS 当前值更完整（30 秒一行 vs 探测落地才变）。
+ *
+ * 不增加任何后端请求：调用点在详情页已经发出的那次查询的回调里。首页自己仍然不许查历史。
+ */
+export function seedMeasuredHistory(
+  uuid: string,
+  samples: readonly PingLiveSample[],
+): void {
+  if (!uuid || samples.length === 0) return;
+
+  hydrate();
+  const now = Date.now();
+  const byTime = new Map<number, PingLiveSample>();
+  for (const sample of samplesByUuid.get(uuid) ?? EMPTY_SAMPLES) {
+    if (isFresh(sample, now)) byTime.set(sample.time, sample);
+  }
+  let added = 0;
+  for (const sample of samples) {
+    if (!isFresh(sample, now) || !hasAnyValue(sample.ping)) continue;
+    byTime.set(sample.time, sample);
+    added += 1;
+  }
+  if (added === 0) return;
+
+  const merged = [...byTime.values()].sort((left, right) => left.time - right.time);
+  samplesByUuid.set(uuid, thinSamples(merged));
+  refreshSeries(uuid, now);
+  schedulePersist();
+}
+
 export function getPingHistorySnapshot(uuid: string): readonly PingLiveSample[] {
   hydrate();
   const cached = seriesByUuid.get(uuid);

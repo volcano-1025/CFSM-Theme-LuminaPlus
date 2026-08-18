@@ -26,9 +26,11 @@ import {
   carrierPingTasks,
   historyRowToLoadRecord,
   historyRowsToPingRecords,
+  historyRowsToPingSamples,
   inferIntervalSeconds,
   toNodeInfo,
 } from "@/services/cfsm/mappers";
+import { seedMeasuredHistory } from "@/services/pingLiveStore";
 
 export { ApiRequestError, DatabaseUpgradeRequiredError } from "@/services/cfsm/http";
 
@@ -303,6 +305,18 @@ export function clearHistoryCache(): void {
   historyInFlight.clear();
 }
 
+/**
+ * 详情页查回来的历史，顺手回灌首页延迟条的缓冲区。
+ *
+ * 首页自己不许查历史（逐节点查会让后端 D1 读行翻几十倍，见 README 的硬约束），但用户主动
+ * 点开详情页时这份数据已经在手上了 —— 白扔可惜：`/api/servers` 的窗口是向后填充出来的，
+ * 而这里是原始采样，看过的节点首页那一小时就能用真数据。缓冲区只留一小时，更早的会被丢掉。
+ */
+function backfillPingBuffer(serverId: string, rows: HistoryRow[]): void {
+  if (rows.length === 0) return;
+  seedMeasuredHistory(serverId, historyRowsToPingSamples(rows));
+}
+
 async function fetchHistoryRows(
   serverId: string,
   hours: number,
@@ -310,7 +324,9 @@ async function fetchHistoryRows(
 ): Promise<HistoryRow[]> {
   const normalizedHours = normalizeHistoryHours(hours);
   if (options?.cache === false) {
-    return requestHistoryRows(serverId, normalizedHours, options);
+    const rows = await requestHistoryRows(serverId, normalizedHours, options);
+    backfillPingBuffer(serverId, rows);
+    return rows;
   }
 
   const key = historyCacheKey(serverId, normalizedHours);
@@ -329,6 +345,7 @@ async function fetchHistoryRows(
   })
     .then((rows) => {
       historyCache.set(key, { fetchedAt: Date.now(), rows });
+      backfillPingBuffer(serverId, rows);
       return rows;
     })
     .finally(() => {

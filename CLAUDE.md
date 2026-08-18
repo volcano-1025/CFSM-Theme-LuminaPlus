@@ -113,6 +113,13 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   两个连带的坑：① `resolvePingSampleCounts` 会把权重取整并至少算 1 份，别指望小数权重；
   ② `sameSeries` 必须一起比 `weight`，否则窗口到达后「样本没变、只有权重变了」会被判成没变，
   加权结果被缓存里那份旧的顶掉（栽过一次）。
+- **`/api/servers` 自带 120 秒缓存**（实测：24 秒内 5 次请求返回完全相同的字节，`?_=随机`
+  也绕不过 —— 缓存在 Worker 里，不是 CDN；响应头没有 `cache-control` / `age` / `cf-cache-status`）。
+  所以全量刷新定在 60 秒（v1.2.7，原来 30 秒），再密也是白打；「快照比 WS 旧十几到几十秒」
+  的根因也是它。
+- **详情页的历史会回灌首页缓冲**（`api.ts` 的 `backfillPingBuffer` → `seedMeasuredHistory`）：
+  挂在 `fetchHistoryRows` 的回调上，不额外发请求 —— 首页自己不许查历史这条硬约束没破。
+  于是「点开过详情页的节点，首页数据更准」是预期行为，不是 bug。
 - **改采样或计权后要跑准确度回归**（`pingLiveStore.test.ts` 的「采样与计权的准确度」）：构造
   60 次探测含 8 次丢包的推送流，卡片算出的丢包率与按时间的真值偏差要小于 15%。这两处历史上
   各栽过一次，都是单看单测通过、实际数字偏一半。
