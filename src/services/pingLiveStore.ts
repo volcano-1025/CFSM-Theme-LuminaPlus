@@ -155,12 +155,23 @@ function mergeWindowWithLocal(
   const out: PingLiveSample[] = [];
   let cursor = 0;
 
-  /** 取 (from, to) 之间的本地样本；游标只前进，窗口点是升序的。 */
+  /**
+   * 取 (from, to) 之间的本地样本，并抽稀到网格步长 —— 一格最多留一个。
+   *
+   * 丢包率是按**样本条数**加权平均的，而本地点 20~50 秒一个、窗口 2 分钟一个。原样塞进空洞，
+   * 那段时间就会拿到三四倍于窗口格子的权重，卡片上的丢包率被这一段拖着走（实测：某段真实
+   * 10 分钟 30% 丢包，按时间应显示 5.0%，不抽稀会显示 6.6%）。补上空洞是为了别让图缺一块，
+   * 不是为了让这段说话更大声。
+   *
+   * 游标只前进，窗口点是升序的。
+   */
   const takeLocal = (from: number, to: number): PingLiveSample[] => {
     const picked: PingLiveSample[] = [];
     while (cursor < local.length && local[cursor]!.time <= from) cursor += 1;
     while (cursor < local.length && local[cursor]!.time < to) {
-      picked.push(local[cursor]!);
+      const sample = local[cursor]!;
+      const last = picked[picked.length - 1];
+      if (!last || sample.time - last.time >= step) picked.push(sample);
       cursor += 1;
     }
     return picked;
@@ -176,9 +187,11 @@ function mergeWindowWithLocal(
     // 就是它，v1.2.6 靠并集顺手盖住了）。所以这种槽位允许被邻近的本地样本顶替；
     // 邻近也没有本地样本时仍旧留空，不编数据。
     if (!hasAnyValue(point.ping)) {
+      // 顶替这一格，所以只取一个点（`takeLocal` 已按步长抽稀，半格宽度内至多一个），
+      // 免得一格换来两三个点、把这一格的权重放大。
       const replacement = takeLocal(point.time - margin, point.time + margin);
       if (replacement.length > 0) {
-        out.push(...replacement);
+        out.push(replacement[0]!);
         continue;
       }
     }

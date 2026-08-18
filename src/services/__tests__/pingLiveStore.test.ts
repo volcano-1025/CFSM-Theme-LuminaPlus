@@ -192,6 +192,28 @@ describe("seedPingHistory", () => {
     expect(samples[25]?.ping.ct).toBeNull();
   });
 
+  it("补进空洞的点按网格步长抽稀，不把那一段的权重放大", () => {
+    // 丢包率按样本条数加权，本地点 30 秒一个、窗口 2 分钟一个：原样塞进去那段会拿到
+    // 四倍权重，卡片丢包率被它拖着走。
+    const holey = backendWindow().filter((_, index) => index < 12 || index > 16);
+    for (let i = 0; i < 40; i += 1) {
+      const time = NOW - 36 * 60_000 + i * 30_000;
+      if (time > NOW - 26 * 60_000) break;
+      recordPingSample("node-a", time, ping({ ct: 45, lossCt: 30 }));
+    }
+
+    seedPingHistory("node-a", holey);
+
+    const filled = getPingHistorySnapshot("node-a").filter(
+      (sample) => sample.ping.lossCt === 30,
+    );
+    // 空洞 12 分钟、网格 2 分钟一格 —— 补进来的点数与格子数同量级，而不是几十个。
+    expect(filled.length).toBeLessThanOrEqual(6);
+    for (let i = 1; i < filled.length; i += 1) {
+      expect(filled[i]!.time - filled[i - 1]!.time).toBeGreaterThanOrEqual(120_000);
+    }
+  });
+
   it("窗口末点迟迟不更新时，用本地点补到现在", () => {
     // 后端快照卡住的情形：窗口整体停在 10 分钟前，右端不能就这么空着。
     const staleWindow = backendWindow().map((sample) => ({
