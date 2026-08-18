@@ -93,19 +93,6 @@ describe("recordPingSample", () => {
     expect(getPingHistorySnapshot("node-a")).toEqual([]);
   });
 
-  it("restores a whole hour of samples, not just the last few minutes", () => {
-    for (let i = 0; i < 60; i++) {
-      recordPingSample("node-a", NOW - (59 - i) * 60_000, ping({ ct: 30 + i }));
-    }
-    vi.advanceTimersByTime(20_000);
-
-    resetPingLiveStore();
-    const restored = getPingHistorySnapshot("node-a");
-
-    expect(restored).toHaveLength(60);
-    expect(restored.at(-1)!.time - restored[0]!.time).toBe(59 * 60_000);
-  });
-
   it("drops samples that fall out of the one-hour window", () => {
     recordPingSample("node-a", NOW - 2 * 60 * 60_000, ping({ ct: 10 }));
     recordPingSample("node-a", NOW, ping({ ct: 20 }));
@@ -134,35 +121,16 @@ describe("recordPingSample", () => {
   });
 });
 
-describe("persistence", () => {
-  it("restores the buffer after a reload so the chart is not blank", () => {
-    recordPingSample("node-a", NOW - 60_000, ping({ ct: 30, lossCt: 0 }));
-    recordPingSample("node-a", NOW, ping({ ct: 31, lossCt: 5 }));
-    // 防抖窗口到点后落盘。
-    vi.advanceTimersByTime(20_000);
-
-    resetPingLiveStore();
-    const restored = getPingHistorySnapshot("node-a");
-
-    expect(restored.map((sample) => sample.ping.ct)).toEqual([30, 31]);
-    expect(restored.at(-1)?.ping.lossCt).toBe(5);
-  });
-
-  it("does not restore samples that have expired while away", () => {
+describe("刷新后不留痕", () => {
+  it("缓冲区只在内存里：刷新后从后端窗口重来，不接上次会话的样本", () => {
+    // 本地点只是拿来补窗口缺口的，跨刷新留着反而会把上次会话的陈旧样本混进来。
     recordPingSample("node-a", NOW, ping({ ct: 30 }));
     vi.advanceTimersByTime(20_000);
 
     resetPingLiveStore();
-    vi.setSystemTime(NOW + 3 * 60 * 60_000);
 
     expect(getPingHistorySnapshot("node-a")).toEqual([]);
-  });
-
-  it("survives a corrupted cache entry", () => {
-    window.localStorage.setItem("cfsm-luminaplus:ping-live:v1", "{not json");
-    resetPingLiveStore();
-
-    expect(getPingHistorySnapshot("node-a")).toEqual([]);
+    expect(window.localStorage.length).toBe(0);
   });
 });
 

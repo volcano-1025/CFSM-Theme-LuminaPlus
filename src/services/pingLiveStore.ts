@@ -17,7 +17,8 @@ import type { CarrierPingSnapshot } from "@/types/cfsm";
  * 首页给每台节点每分钟查一次会让后端 D1 读行翻几十倍（后端作者实测约 60 倍，
  * 30 秒上报则约 120 倍）。
  *
- * 缓冲区会写进 localStorage，旧版后端下刷新也能立刻接上；超过一小时的样本在读取时丢弃。
+ * 缓冲区只在内存里：首屏的完整一小时由后端窗口给，本地点只是拿来补窗口的缺口，
+ * 没必要跨刷新留着（留着反而会把上次会话的陈旧样本混进来）。超过一小时的样本读取时丢弃。
  */
 
 export interface PingLiveSample {
@@ -46,10 +47,7 @@ const MIN_THINNED_GAP_MS = (60 * 60 * 1000) / MAX_SAMPLES_PER_NODE;
 const DEFAULT_WINDOW_STEP_MS = 120_000;
 /** 窗口相邻两点间隔超过步长的几倍，才算「缺了一段」、需要本地点来补。 */
 const GAP_FILL_STEP_FACTOR = 2;
-const MAX_PERSISTED_NODES = 100;
 const SAMPLE_TTL_MS = 60 * 60 * 1000;
-const STORAGE_KEY = "cfsm-luminaplus:ping-live:v1";
-const PERSIST_DEBOUNCE_MS = 15_000;
 
 const EMPTY_SAMPLES: readonly PingLiveSample[] = [];
 
@@ -60,8 +58,6 @@ const windowByUuid = new Map<string, readonly PingLiveSample[]>();
 /** 对外可见的合并结果，引用稳定（`useSyncExternalStore` 要求）。 */
 const seriesByUuid = new Map<string, readonly PingLiveSample[]>();
 const listenersByUuid = new Map<string, Set<Listener>>();
-let hydrated = false;
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function hasAnyValue(ping: CarrierPingSnapshot): boolean {
   return (
@@ -108,127 +104,6 @@ function samePing(a: CarrierPingSnapshot, b: CarrierPingSnapshot): boolean {
     a.lossCm === b.lossCm &&
     a.lossBd === b.lossBd
   );
-}
-
-/* ------------------------------------------------------------------ *
- * 持久化
- * ------------------------------------------------------------------ */
-
-/** 紧凑格式：[time, ct, cu, cm, bd, lossCt, lossCu, lossCm, lossBd] */
-type PersistedSample = [
-  number,
-  number | null,
-  number | null,
-  number | null,
-  number | null,
-  number | null,
-  number | null,
-  number | null,
-  number | null,
-];
-
-function toPersisted(sample: PingLiveSample): PersistedSample {
-  const { ping } = sample;
-  return [
-    sample.time,
-    ping.ct,
-    ping.cu,
-    ping.cm,
-    ping.bd,
-    ping.lossCt,
-    ping.lossCu,
-    ping.lossCm,
-    ping.lossBd,
-  ];
-}
-
-function fromPersisted(entry: unknown): PingLiveSample | null {
-  if (!Array.isArray(entry) || entry.length < 9) return null;
-  const time = Number(entry[0]);
-  if (!Number.isFinite(time) || time <= 0) return null;
-
-  const value = (index: number): number | null => {
-    const raw = entry[index];
-    if (raw == null) return null;
-    const num = Number(raw);
-    return Number.isFinite(num) ? num : null;
-  };
-
-  return {
-    time,
-    ping: {
-      ct: value(1),
-      cu: value(2),
-      cm: value(3),
-      bd: value(4),
-      lossCt: value(5),
-      lossCu: value(6),
-      lossCm: value(7),
-      lossBd: value(8),
-    },
-  };
-}
-
-function hydrate(): void {
-  if (hydrated) return;
-  hydrated = true;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return;
-    const nodes = (parsed as { nodes?: unknown }).nodes;
-    if (!nodes || typeof nodes !== "object") return;
-
-    const now = Date.now();
-    for (const [uuid, entries] of Object.entries(nodes as Record<string, unknown>)) {
-      if (!Array.isArray(entries)) continue;
-      const samples = entries
-        .map(fromPersisted)
-        .filter((sample): sample is PingLiveSample => sample != null && isFresh(sample, now))
-        .sort((left, right) => left.time - right.time);
-      if (samples.length > 0) samplesByUuid.set(uuid, samples);
-    }
-  } catch {
-    // 缓存损坏时当作没有历史，重新累积即可。
-  }
-}
-
-function persistNow(): void {
-  try {
-    const now = Date.now();
-    const nodes: Record<string, PersistedSample[]> = {};
-    let count = 0;
-    for (const [uuid, samples] of samplesByUuid) {
-      if (count >= MAX_PERSISTED_NODES) break;
-      const fresh = samples.filter((sample) => isFresh(sample, now));
-      if (fresh.length === 0) continue;
-      nodes[uuid] = thinSamples(fresh).map(toPersisted);
-      count += 1;
-    }
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 1, savedAt: now, nodes }));
-  } catch {
-    // 配额用尽或隐私模式：内存里的缓冲区照常工作，只是刷新后要重新累积。
-  }
-}
-
-function schedulePersist(): void {
-  if (persistTimer != null) return;
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    persistNow();
-  }, PERSIST_DEBOUNCE_MS);
-}
-
-if (typeof window !== "undefined") {
-  // 关闭/切走标签页时立刻落盘，避免丢掉最后一个防抖窗口内的样本。
-  window.addEventListener("pagehide", () => {
-    if (persistTimer != null) {
-      clearTimeout(persistTimer);
-      persistTimer = null;
-    }
-    if (samplesByUuid.size > 0) persistNow();
-  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -359,7 +234,6 @@ export function recordPingSample(
   if (!uuid || !Number.isFinite(time) || time <= 0) return;
   if (!hasAnyValue(ping)) return;
 
-  hydrate();
   const previous = samplesByUuid.get(uuid) ?? EMPTY_SAMPLES;
   const last = previous[previous.length - 1];
   if (last) {
@@ -376,7 +250,6 @@ export function recordPingSample(
   const next = [...previous.filter((sample) => isFresh(sample, now)), { time, ping }];
   samplesByUuid.set(uuid, thinSamples(next));
   refreshSeries(uuid, now);
-  schedulePersist();
 }
 
 function sameSeries(a: readonly PingLiveSample[], b: readonly PingLiveSample[]): boolean {
@@ -401,7 +274,6 @@ export function seedPingHistory(
 ): void {
   if (!uuid || window.length === 0) return;
 
-  hydrate();
   const now = Date.now();
   const fresh = [...window]
     .filter((sample) => isFresh(sample, now))
@@ -416,10 +288,9 @@ export function seedPingHistory(
 }
 
 export function getPingHistorySnapshot(uuid: string): readonly PingLiveSample[] {
-  hydrate();
   const cached = seriesByUuid.get(uuid);
   if (cached) return cached;
-  // 刚 hydrate 出来的持久化缓冲还没算过合并结果；这里补算并缓存，不能 emit
+  // 还没算过合并结果时补算并缓存，但不能 emit
   // （getSnapshot 会在 React 渲染期间被调用）。
   const next = computeSeries(uuid, Date.now());
   if (next.length === 0) return EMPTY_SAMPLES;
@@ -444,11 +315,8 @@ export function subscribePingHistory(uuid: string, listener: Listener): () => vo
 /** 节点被删除后清掉它的缓冲区，避免无限增长。 */
 export function retainPingNodes(uuids: Iterable<string>): void {
   const keep = new Set(uuids);
-  let changed = false;
   for (const uuid of [...samplesByUuid.keys()]) {
-    if (keep.has(uuid)) continue;
-    samplesByUuid.delete(uuid);
-    changed = true;
+    if (!keep.has(uuid)) samplesByUuid.delete(uuid);
   }
   for (const uuid of [...windowByUuid.keys()]) {
     if (!keep.has(uuid)) windowByUuid.delete(uuid);
@@ -456,7 +324,6 @@ export function retainPingNodes(uuids: Iterable<string>): void {
   for (const uuid of [...seriesByUuid.keys()]) {
     if (!keep.has(uuid)) seriesByUuid.delete(uuid);
   }
-  if (changed) schedulePersist();
 }
 
 /** 测试用。 */
@@ -465,9 +332,4 @@ export function resetPingLiveStore(): void {
   windowByUuid.clear();
   seriesByUuid.clear();
   listenersByUuid.clear();
-  hydrated = false;
-  if (persistTimer != null) {
-    clearTimeout(persistTimer);
-    persistTimer = null;
-  }
 }
