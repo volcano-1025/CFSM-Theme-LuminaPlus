@@ -7,7 +7,7 @@ Workers 上当探针面板用。用户文档见 [README.md](README.md)，版本�
 
 ```bash
 npm install
-npm run dev          # http://localhost:5173/?mock=1 用内置假数据
+npm run dev          # http://localhost:5173/?mock=1 用内置假数据；连线上后端写 .env 的 API_BASE
 npm run typecheck    # tsc -b
 npm run lint         # eslint
 npm test             # vitest
@@ -29,8 +29,10 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 硬约束（违反会出事）
 
-- **首页不许查 `/api/history/all`**：逐节点查历史会让后端 D1 读行翻几十倍。首页只能用
-  `/api/servers` 的 `servers[].ping|loss` 窗口 + WebSocket 实时值。详情页读历史是允许的。
+- **首页不许发起 `/api/history/all` 请求**：逐节点查历史会让后端 D1 读行翻几十倍。首页的数据
+  只能来自 WebSocket 实时值和 `/api/servers` 的 `servers[].ping|loss` 窗口。详情页读历史是
+  允许的，它那份结果**回灌**首页缓冲也是允许的（`backfillPingBuffer`，不额外发请求）——
+  约束在「谁发起请求」，不在「用了历史数据」。
 - **产物目录只能有 `index.html` 和 `assets/`**，CI 有校验步骤。
 - **产物分支（`dist` / `dist-preview`）只追加提交，绝不 force-push**：主题商店的
   `versions[].commitid` 和用户锁定的 SHA 指向历史提交，重写会让旧版本用户失效。
@@ -132,13 +134,21 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-v1.2.6 已发布，`dist` 头是产物提交 `cd47d10`（2026-08-17）。主题商店里的版本登记由站长
+v1.2.7 已发布（2026-08-18），`dist` 头是产物提交 `9ceb599`。主题商店里的版本登记由站长
 自己更新，代码这边推完 `main` 就算完。
+
+v1.2.7 这一版把首页延迟/丢包的数据口径整个翻过来了（窗口权威 → 实测权威），起因是线上取证
+发现后端窗口是向后填充的低保真数据 —— 细节见上面「容易踩的坑」里那几条。**再收到「首页数字
+不对」的反馈，先按那里写的方法抓两个接口对齐打表，别直接改代码。**
+
+待后端：`/api/servers` 窗口里的 `loss` 是单次探测结果而不是那一格的聚合，首页在浏览器没实测
+覆盖的时段无论怎么算都对不上详情页（实测同一小时 1.07% vs 5.52%）。已建议站长找后端作者把它
+改成与 `/api/history/all` 同源的聚合值；前端这边没有别的办法了。
 
 待确认：v1.2.4 的「Ping 图表辅助线支持触屏拖动」只在单测和桌面端验过（坐标换算 + 色带竖线
 跟随），真机触感还没人试过 —— 用户反馈说不跟手就先查 `.u-over` 的 `touch-action`。
 其余没有排期的功能，以线上反馈的修复为主。
 
 v1.2.5 遗留：`src/pages/Traffic.tsx`、`useTodayTrafficStats`、`utils/trafficStats.ts` 与
-`components/traffic/` 已无人引用（`#/traffic` 路由与首页入口都摘掉了），刻意留着以便日后恢复；
-真要删就连 `traffic-stats.css` 与两个测试一起清。
+`components/traffic/` 已无人引用（`#/traffic` 路由与首页入口都摘掉了，2026-08-18 复核仍是
+唯一引用者就是它们自己），刻意留着以便日后恢复；真要删就连 `traffic-stats.css` 与两个测试一起清。
