@@ -196,6 +196,34 @@ describe("seedPingHistory", () => {
     expect(samples.map((sample) => sample.ping.ct)).not.toContain(98);
   });
 
+  it("窗口里没值的那一格，用本地实测点顶替", () => {
+    // 后端这轮探测没出结果（格子在、值是 null）。图表对「明确没值的槽位」是真的留空的，
+    // 本地却正好测到了值 —— 不顶替就会平白空一格（线上看到的「柱子中间缺一格」）。
+    const withEmptySlot = backendWindow().map((sample, index) =>
+      index === 25 ? { ...sample, ping: ping({}) } : sample,
+    );
+    recordPingSample("node-a", NOW - 8 * 60_000 - 20_000, ping({ ct: 61 }));
+
+    seedPingHistory("node-a", withEmptySlot);
+
+    const samples = getPingHistorySnapshot("node-a");
+    expect(samples.map((sample) => sample.ping.ct)).toContain(61);
+    // 顶替，不是插队：总数不变。
+    expect(samples).toHaveLength(30);
+  });
+
+  it("没值的那一格附近也没有本地样本时，仍旧留空不编数据", () => {
+    const withEmptySlot = backendWindow().map((sample, index) =>
+      index === 25 ? { ...sample, ping: ping({}) } : sample,
+    );
+
+    seedPingHistory("node-a", withEmptySlot);
+
+    const samples = getPingHistorySnapshot("node-a");
+    expect(samples).toHaveLength(30);
+    expect(samples[25]?.ping.ct).toBeNull();
+  });
+
   it("窗口末点迟迟不更新时，用本地点补到现在", () => {
     // 后端快照卡住的情形：窗口整体停在 10 分钟前，右端不能就这么空着。
     const staleWindow = backendWindow().map((sample) => ({

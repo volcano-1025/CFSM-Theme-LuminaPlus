@@ -280,25 +280,39 @@ function mergeWindowWithLocal(
   const out: PingLiveSample[] = [];
   let cursor = 0;
 
-  const fillGap = (from: number, to: number) => {
-    while (cursor < local.length && local[cursor]!.time <= from + margin) cursor += 1;
-    while (cursor < local.length && local[cursor]!.time < to - margin) {
-      out.push(local[cursor]!);
+  /** 取 (from, to) 之间的本地样本；游标只前进，窗口点是升序的。 */
+  const takeLocal = (from: number, to: number): PingLiveSample[] => {
+    const picked: PingLiveSample[] = [];
+    while (cursor < local.length && local[cursor]!.time <= from) cursor += 1;
+    while (cursor < local.length && local[cursor]!.time < to) {
+      picked.push(local[cursor]!);
       cursor += 1;
     }
+    return picked;
   };
 
   for (const [index, point] of window.entries()) {
     const previous = index > 0 ? window[index - 1]! : null;
     if (previous && point.time - previous.time > minGapMs) {
-      fillGap(previous.time, point.time);
+      out.push(...takeLocal(previous.time + margin, point.time - margin));
+    }
+    // 「格子在、值是 null」的槽位（后端这轮探测没出结果）：图表本来会真的留空 —— 那是对的，
+    // 可本地要是正好在那段时间实测到了值，留空就成了自找的空洞（线上看到的「柱子中间缺一格」
+    // 就是它，v1.2.6 靠并集顺手盖住了）。所以这种槽位允许被邻近的本地样本顶替；
+    // 邻近也没有本地样本时仍旧留空，不编数据。
+    if (!hasAnyValue(point.ping)) {
+      const replacement = takeLocal(point.time - margin, point.time + margin);
+      if (replacement.length > 0) {
+        out.push(...replacement);
+        continue;
+      }
     }
     out.push(point);
   }
 
   // 窗口末点到「现在」之间也可能缺一段（后端快照迟迟不更新），同样用本地点补。
   const last = window[window.length - 1]!;
-  if (now - last.time > minGapMs) fillGap(last.time, now + margin);
+  if (now - last.time > minGapMs) out.push(...takeLocal(last.time + margin, now + margin));
 
   return out;
 }
