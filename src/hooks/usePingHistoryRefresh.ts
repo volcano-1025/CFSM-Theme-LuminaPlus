@@ -59,7 +59,9 @@ export function usePingHistoryRefresh(): PingHistoryRefreshState {
       .then((result) => {
         if (!mountedRef.current) return;
         setLastResult(result);
-        setLastRefreshedAt(Date.now());
+        // 一台都没成功就不算「刷新过」——否则提示会变成「上次刷新 23:44，4 台失败」，
+        // 读起来像是刷成功了只是有几台掉队。
+        if (result.succeeded > 0) setLastRefreshedAt(Date.now());
         // 一台都没成功才算失败；部分失败仍然回灌了数据，按成功提示但把数字带出去。
         settle(result.succeeded > 0 ? "done" : "error");
       })

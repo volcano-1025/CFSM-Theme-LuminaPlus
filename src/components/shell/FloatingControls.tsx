@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Grid3x3, LayoutGrid, List, Monitor, Palette, RefreshCw, Rows3, Settings, SlidersHorizontal, Sun, Moon } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Grid3x3, LayoutGrid, List, Monitor, Palette, RefreshCw, Rows3, Settings, SlidersHorizontal, Sun, Moon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useViewMode } from "@/hooks/useViewMode";
@@ -52,6 +52,21 @@ function buildRefreshTitle({
   return `${base}\n上次刷新 ${at}${partial}`;
 }
 
+/** 刷新结束后短暂显示的结果条文案；返回 null 表示这会儿不该显示。 */
+function buildRefreshToast({
+  status,
+  lastResult,
+}: PingHistoryRefreshState): string | null {
+  if (status === "done") {
+    if (!lastResult) return "延迟数据已更新";
+    return lastResult.failed > 0
+      ? `已更新 ${lastResult.succeeded} 台 · ${lastResult.failed} 台失败`
+      : `延迟数据已更新 · ${lastResult.succeeded} 台`;
+  }
+  if (status === "error") return "刷新失败，点按钮重试";
+  return null;
+}
+
 const APPEARANCE_OPTIONS = [
   { value: "light", icon: Sun, label: "浅色" },
   { value: "system", icon: Monitor, label: "跟随系统" },
@@ -90,6 +105,8 @@ export function FloatingControls({
   }, [onExpandedChange]);
 
   const refreshTitle = buildRefreshTitle(pingRefresh);
+  const refreshToast = buildRefreshToast(pingRefresh);
+  const refreshDone = pingRefresh.status === "done";
 
   const toggleControls = () => {
     // 收起快捷栏时同时结束子面板状态，避免下次展开时调色盘自动复现。
@@ -197,6 +214,7 @@ export function FloatingControls({
             type="button"
             className={clsx(
               "control-button floating-controls-refresh grid h-9 w-9 place-items-center",
+              refreshDone && "is-refresh-done",
               pingRefresh.status === "error" && "is-refresh-error",
             )}
             aria-label="刷新延迟数据"
@@ -205,10 +223,18 @@ export function FloatingControls({
             disabled={pingRefresh.nodeCount === 0 || pingRefresh.status === "loading"}
             onClick={pingRefresh.refresh}
           >
-            <RefreshCw
-              size={16}
-              className={pingRefresh.status === "loading" ? "floating-controls-refresh-spin" : undefined}
-            />
+            {refreshDone ? (
+              <Check size={16} />
+            ) : (
+              <RefreshCw
+                size={16}
+                className={
+                  pingRefresh.status === "loading"
+                    ? "floating-controls-refresh-spin"
+                    : undefined
+                }
+              />
+            )}
           </button>
           <button
             type="button"
@@ -229,7 +255,19 @@ export function FloatingControls({
             <MetricColorPicker hidden={collapsed || !colorsOpen} />
           </Suspense>
         )}
-        {showSyncWarning && !collapsed && !colorsOpen && (
+        {refreshToast && !colorsOpen && (
+          <div
+            className={clsx(
+              "floating-controls-refresh-toast pointer-events-none flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium shadow-[0_10px_25px_-18px_rgba(0,0,0,0.8)] backdrop-blur",
+              refreshDone ? "is-done" : "is-error",
+            )}
+            role="status"
+          >
+            {refreshDone ? <Check size={12} /> : <AlertTriangle size={12} />}
+            <span>{refreshToast}</span>
+          </div>
+        )}
+        {showSyncWarning && !collapsed && !colorsOpen && !refreshToast && (
           <div className="floating-controls-sync-warning pointer-events-none flex items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--status-offline)_32%,transparent)] bg-[color-mix(in_srgb,var(--surface-a)_90%,transparent)] px-3 py-1 text-[11px] font-medium text-[var(--status-offline)] shadow-[0_10px_25px_-18px_rgba(0,0,0,0.8)] backdrop-blur">
             <AlertTriangle size={12} />
             <span>实时状态同步异常，当前展示的是最近缓存</span>

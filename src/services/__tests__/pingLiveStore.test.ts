@@ -10,7 +10,7 @@ import {
   subscribePingHistory,
   type PingLiveSample,
 } from "@/services/pingLiveStore";
-import { buildPingOverviewItem } from "@/hooks/usePingOverview";
+import { buildPingBuckets, buildPingOverviewItem } from "@/hooks/usePingOverview";
 import { EMPTY_CARRIER_PING, type CarrierPingSnapshot } from "@/types/cfsm";
 
 const NOW = Date.UTC(2026, 6, 17, 12, 0);
@@ -459,3 +459,84 @@ describe("retainPingNodes", () => {
     expect(getPingHistorySnapshot("node-b")).toEqual([]);
   });
 });
+
+describe("丢弃后端窗口里复制出来的格子", () => {
+  const NOW = Date.now();
+  const STEP = 120_000;
+
+  function windowOf(values: Array<[number, number, number]>): PingLiveSample[] {
+    return values.map(([ct, cu, cm], index) => ({
+      time: NOW - (values.length - 1 - index) * STEP,
+      ping: { ct, cu, cm, bd: null, lossCt: 0, lossCu: 0, lossCm: 0, lossBd: null },
+    }));
+  }
+
+  it("刚加进来的节点：整窗口都是复印件，一格都不画", () => {
+    const uuid = "fresh-node";
+    // 线上实测形状：30 格全是 1/1/1，而历史表里只有 6 分钟的行。
+    seedPingHistory(uuid, windowOf(Array.from({ length: 30 }, () => [1, 1, 1])));
+
+    expect(getPingHistorySnapshot(uuid)).toHaveLength(0);
+  });
+
+  it("只丢重复段，末尾真值留着", () => {
+    const uuid = "partly-real";
+    const values: Array<[number, number, number]> = [
+      ...Array.from({ length: 27 }, () => [136, 143, 150] as [number, number, number]),
+      [134, 140, 149],
+      [134, 145, 149],
+      [137, 141, 149],
+    ];
+    seedPingHistory(uuid, windowOf(values));
+
+    const kept = getPingHistorySnapshot(uuid);
+    expect(kept).toHaveLength(3);
+    expect(kept.map((sample) => sample.ping.ct)).toEqual([134, 134, 137]);
+  });
+
+  it("正常波动的窗口一格不丢", () => {
+    const uuid = "varying";
+    const values = Array.from(
+      { length: 30 },
+      (_, index) => [130 + (index % 7), 140 + (index % 5), 150 + (index % 3)] as [number, number, number],
+    );
+    seedPingHistory(uuid, windowOf(values));
+
+    expect(getPingHistorySnapshot(uuid)).toHaveLength(30);
+  });
+
+  it("新节点刷新之后：只画真实覆盖到的那几分钟，其余留空", () => {
+    const uuid = "fresh-node-refreshed";
+    // 后端窗口整段是复印件（线上 Uzumaru-tw 的形状），历史表里只有最近 6 分钟。
+    seedPingHistory(uuid, windowOf(Array.from({ length: 30 }, () => [1, 1, 1])));
+    seedMeasuredHistory(
+      uuid,
+      Array.from({ length: 12 }, (_, index) => ({
+        time: NOW - (11 - index) * 30_000,
+        ping: ping({ ct: 40 + index, cu: 41, cm: 42, lossCt: 0 }),
+      })),
+    );
+
+    const item = buildPingOverviewItem(uuid, 1, getPingHistorySnapshot(uuid));
+    const buckets = buildPingBuckets(item, 30, NOW);
+    const active = buckets.filter((bucket) => bucket.total > 0).length;
+    // 一小时 30 格里只有最后几格该有值，绝不该是填满的一整个小时。
+    expect(active).toBeGreaterThan(0);
+    expect(active).toBeLessThanOrEqual(6);
+  });
+
+  it("短暂重复（不到门槛）不算复印件", () => {
+    const uuid = "short-repeat";
+    const values: Array<[number, number, number]> = [
+      [130, 140, 150],
+      [131, 141, 151],
+      [131, 141, 151],
+      [131, 141, 151],
+      [132, 142, 152],
+      [133, 143, 153],
+    ];
+    seedPingHistory(uuid, windowOf(values));
+
+    expect(getPingHistorySnapshot(uuid)).toHaveLength(6);
+  });
+})

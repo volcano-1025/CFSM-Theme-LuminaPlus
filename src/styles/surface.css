@@ -242,6 +242,47 @@ body::after {
   color: var(--status-offline);
 }
 
+/* 刷完之后按钮短暂变成对勾——一次动作要有个落点，光靠 title 看不见。 */
+.floating-controls-refresh.is-refresh-done {
+  border-color: color-mix(in srgb, var(--status-success) 42%, var(--border));
+  color: var(--status-success);
+}
+
+/* 结果条和「同步异常」提示共用锚点，两者不会同时出现（刷新结果优先且只停留几秒）。 */
+.floating-controls-refresh-toast {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 2rem));
+  background: color-mix(in srgb, var(--surface-a) 90%, transparent);
+  animation: floating-controls-toast-in 180ms ease-out;
+}
+
+.floating-controls-refresh-toast.is-done {
+  border-color: color-mix(in srgb, var(--status-success) 32%, transparent);
+  color: var(--status-success);
+}
+
+.floating-controls-refresh-toast.is-error {
+  border-color: color-mix(in srgb, var(--status-offline) 32%, transparent);
+  color: var(--status-offline);
+}
+
+@keyframes floating-controls-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-controls-refresh-toast {
+    animation: none;
+  }
+}
+
 .floating-controls-refresh-spin {
   animation: floating-controls-refresh-spin 900ms linear infinite;
 }
