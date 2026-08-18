@@ -283,8 +283,8 @@ async function requestHistoryRows(
 /**
  * 历史查询的短期缓存。
  *
- * CF-Server-Monitor 没有批量历史接口，一台节点一次请求；而首页 Ping 概览会为四条线路
- * 分别取数据。缓存让同一节点同一时长的并发/连续请求只打一次后端。
+ * CF-Server-Monitor 没有批量历史接口，一台节点一次请求；详情页与首页异常空洞回填共享
+ * 同一套请求。缓存让同一节点同一时长的并发/连续请求只打一次后端。
  */
 const HISTORY_CACHE_TTL_MS = 20_000;
 
@@ -308,9 +308,9 @@ export function clearHistoryCache(): void {
 /**
  * 详情页查回来的历史，顺手回灌首页延迟条的缓冲区。
  *
- * 首页自己不许查历史（逐节点查会让后端 D1 读行翻几十倍，见 README 的硬约束），但用户主动
- * 点开详情页时这份数据已经在手上了 —— 白扔可惜：`/api/servers` 的窗口是向后填充出来的，
- * 而这里是原始采样，看过的节点首页那一小时就能用真数据。缓冲区只留一小时，更早的会被丢掉。
+ * 首页正常不查历史（逐节点查会让后端 D1 读行翻几十倍，见 README 的约束）；用户主动点开
+ * 详情页，或首页确认某节点有明显空洞时，这份原始采样已经/正在被取回 —— 白扔可惜：
+ * `/api/servers` 的窗口是向后填充出来的，而这里是原始采样。缓冲区只留一小时，更早的会被丢掉。
  */
 function backfillPingBuffer(serverId: string, rows: HistoryRow[]): void {
   if (rows.length === 0) return;
