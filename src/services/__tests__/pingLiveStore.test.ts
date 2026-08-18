@@ -68,7 +68,7 @@ describe("recordPingSample", () => {
 
     const samples = getPingHistorySnapshot("node-a");
     expect(samples).toHaveLength(60);
-    // 首尾跨度覆盖整整一小时，图表 24 格能填满。
+    // 首尾跨度覆盖整整一小时，图表 30 格能填满。
     expect(samples.at(-1)!.time - samples[0]!.time).toBe(59 * 60_000);
   });
 
@@ -183,15 +183,33 @@ describe("seedPingHistory", () => {
     expect(samples.at(-1)!.time - samples[0]!.time).toBe(29 * 120_000);
   });
 
-  it("keeps live samples that are newer than the window", () => {
+  it("窗口铺满时一个本地点都不掺，首页口径与 /api/servers 一致", () => {
+    // 两种来源的疏密和算法都不一样，混在一格里会让丢包的加权平均随本地点越攒越多而漂移。
     seedPingHistory("node-a", backendWindow());
-    recordPingSample("node-a", NOW + 60_000, ping({ ct: 99 }));
-    // 下一次 /api/servers 返回同一个窗口时，不能把这个更新的点冲掉。
+    recordPingSample("node-a", NOW - 30 * 60_000, ping({ ct: 99 }));
+    recordPingSample("node-a", NOW + 60_000, ping({ ct: 98 }));
     seedPingHistory("node-a", backendWindow());
 
     const samples = getPingHistorySnapshot("node-a");
-    expect(samples).toHaveLength(31);
-    expect(samples.at(-1)?.ping.ct).toBe(99);
+    expect(samples).toHaveLength(30);
+    expect(samples.map((sample) => sample.ping.ct)).not.toContain(99);
+    expect(samples.map((sample) => sample.ping.ct)).not.toContain(98);
+  });
+
+  it("窗口末点迟迟不更新时，用本地点补到现在", () => {
+    // 后端快照卡住的情形：窗口整体停在 10 分钟前，右端不能就这么空着。
+    const staleWindow = backendWindow().map((sample) => ({
+      ...sample,
+      time: sample.time - 10 * 60_000,
+    }));
+    recordPingSample("node-a", NOW - 6 * 60_000, ping({ ct: 71 }));
+    recordPingSample("node-a", NOW - 3 * 60_000, ping({ ct: 72 }));
+
+    seedPingHistory("node-a", staleWindow);
+
+    const values = getPingHistorySnapshot("node-a").map((sample) => sample.ping.ct);
+    expect(values).toContain(71);
+    expect(values).toContain(72);
   });
 
   it("keeps locally accumulated samples that fill a hole in the window", () => {

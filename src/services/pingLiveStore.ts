@@ -3,13 +3,15 @@ import type { CarrierPingSnapshot } from "@/types/cfsm";
 /**
  * 首页延迟条的数据源。
  *
- * 两个来源，优先级从高到低：
+ * 两个来源：
  *
  * 1. **后端窗口**（Workers 2.8.3 Beta2 起）：`/api/servers` 直接给出每台节点最近一小时的
  *    探测窗口 —— 30 个槽位、每 2 分钟一个。首屏就是完整的一小时，由 `seedPingHistory` 灌入。
  * 2. **实时累积**：`/api/servers` 与 WebSocket 推送里一直都有 `ping_ct/cu/cm/bd` 与 `loss_*`
- *    当前值，由 `recordPingSample` 逐点累积。用于两次刷新之间补上最新的点，
- *    以及兜底旧版后端（那时没有窗口字段，只能从零攒）。
+ *    当前值，由 `recordPingSample` 逐点累积。兜底旧版后端（那时没有窗口字段，只能从零攒），
+ *    以及新版后端窗口停止滑动时补中间的空洞。
+ *
+ * **有窗口时以窗口为准，本地点只补缺口**，理由见 {@link mergeWindowWithLocal}。
  *
  * 两者都不查 `/api/history/all`：那个接口会扫节点整段时间窗口的历史行，
  * 首页给每台节点每分钟查一次会让后端 D1 读行翻几十倍（后端作者实测约 60 倍，
@@ -40,6 +42,10 @@ const MIN_CHANGED_SAMPLE_GAP_MS = 20_000;
 const MAX_SAMPLES_PER_NODE = 96;
 /** 抽稀后相邻样本的最小间隔：一小时铺满上限条数，保证覆盖整段窗口。 */
 const MIN_THINNED_GAP_MS = (60 * 60 * 1000) / MAX_SAMPLES_PER_NODE;
+/** 后端窗口的网格步长推不出来时的兜底：实测是 2 分钟一格。 */
+const DEFAULT_WINDOW_STEP_MS = 120_000;
+/** 窗口相邻两点间隔超过步长的几倍，才算「缺了一段」、需要本地点来补。 */
+const GAP_FILL_STEP_FACTOR = 2;
 const MAX_PERSISTED_NODES = 100;
 const SAMPLE_TTL_MS = 60 * 60 * 1000;
 const STORAGE_KEY = "cfsm-luminaplus:ping-live:v1";
@@ -47,7 +53,12 @@ const PERSIST_DEBOUNCE_MS = 15_000;
 
 const EMPTY_SAMPLES: readonly PingLiveSample[] = [];
 
+/** 本地实时累积（会持久化）。 */
 const samplesByUuid = new Map<string, readonly PingLiveSample[]>();
+/** 后端下发的一小时窗口，按节点存最近一份。 */
+const windowByUuid = new Map<string, readonly PingLiveSample[]>();
+/** 对外可见的合并结果，引用稳定（`useSyncExternalStore` 要求）。 */
+const seriesByUuid = new Map<string, readonly PingLiveSample[]>();
 const listenersByUuid = new Map<string, Set<Listener>>();
 let hydrated = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -221,6 +232,98 @@ if (typeof window !== "undefined") {
 }
 
 /* ------------------------------------------------------------------ *
+ * 合并
+ * ------------------------------------------------------------------ */
+
+/**
+ * 窗口的网格步长。
+ *
+ * 取相邻间隔的**中位数**：末尾那个「当前」点常常离上一格好几分钟（后端窗口并不严格
+ * 滑动），取平均或最大值都会被它带偏，取最小值又会被偶发的重复时间戳带偏。
+ */
+function resolveWindowStepMs(window: readonly PingLiveSample[]): number {
+  const gaps: number[] = [];
+  for (let index = 1; index < window.length; index += 1) {
+    const gap = window[index]!.time - window[index - 1]!.time;
+    if (gap > 0) gaps.push(gap);
+  }
+  if (gaps.length === 0) return DEFAULT_WINDOW_STEP_MS;
+  gaps.sort((left, right) => left - right);
+  return gaps[Math.floor(gaps.length / 2)]!;
+}
+
+/**
+ * 后端窗口为准，本地累积只补缺口。
+ *
+ * 两个来源的口径不一样：窗口是后端按 2 分钟网格算好的，本地是 WS 当前值 20~50 秒攒一个。
+ * 早先按时间戳取并集，于是同一格里混着两种样本 —— 丢包按样本数加权平均之后，首页既不等于
+ * 后端窗口自己算的、也不等于详情页历史算的，而且本地点越攒越多、比例还会随开着页面的时间漂移
+ * （用户看到的「首页数据不对」多半是这个）。
+ *
+ * 现在只有窗口自己缺了一段（相邻两点间隔超过步长的 {@link GAP_FILL_STEP_FACTOR} 倍）才用本地点
+ * 去填那段：正常情况下一个本地点都不参与，首页口径与 `/api/servers` 完全一致，柱子跟着窗口
+ * 每 2 分钟动一次；窗口停止滑动时（实测会铺到 35 分钟前就停、末尾直接追加一个当前点），
+ * 中间那段空洞仍由本地点补上 —— 这正是当初要取并集的原因，不能直接丢掉。
+ */
+function mergeWindowWithLocal(
+  window: readonly PingLiveSample[],
+  local: readonly PingLiveSample[],
+  now: number,
+): readonly PingLiveSample[] {
+  if (window.length === 0) return local;
+  if (local.length === 0) return window;
+
+  const step = resolveWindowStepMs(window);
+  const minGapMs = step * GAP_FILL_STEP_FACTOR;
+  // 缺口两端各留半格，免得补进来的点和网格点挤在同一格里重复计权。
+  const margin = step / 2;
+  const out: PingLiveSample[] = [];
+  let cursor = 0;
+
+  const fillGap = (from: number, to: number) => {
+    while (cursor < local.length && local[cursor]!.time <= from + margin) cursor += 1;
+    while (cursor < local.length && local[cursor]!.time < to - margin) {
+      out.push(local[cursor]!);
+      cursor += 1;
+    }
+  };
+
+  for (const [index, point] of window.entries()) {
+    const previous = index > 0 ? window[index - 1]! : null;
+    if (previous && point.time - previous.time > minGapMs) {
+      fillGap(previous.time, point.time);
+    }
+    out.push(point);
+  }
+
+  // 窗口末点到「现在」之间也可能缺一段（后端快照迟迟不更新），同样用本地点补。
+  const last = window[window.length - 1]!;
+  if (now - last.time > minGapMs) fillGap(last.time, now + margin);
+
+  return out;
+}
+
+function computeSeries(uuid: string, now: number): readonly PingLiveSample[] {
+  const window = (windowByUuid.get(uuid) ?? EMPTY_SAMPLES).filter((sample) =>
+    isFresh(sample, now),
+  );
+  const local = (samplesByUuid.get(uuid) ?? EMPTY_SAMPLES).filter((sample) =>
+    isFresh(sample, now),
+  );
+  if (window.length === 0 && local.length === 0) return EMPTY_SAMPLES;
+  return thinSamples(mergeWindowWithLocal(window, local, now));
+}
+
+/** 写入之后重算；内容没变就保持原引用，也不惊动订阅者。 */
+function refreshSeries(uuid: string, now: number): void {
+  const next = computeSeries(uuid, now);
+  const current = seriesByUuid.get(uuid);
+  if (current && sameSeries(current, next)) return;
+  seriesByUuid.set(uuid, next);
+  emit(uuid);
+}
+
+/* ------------------------------------------------------------------ *
  * 读写
  * ------------------------------------------------------------------ */
 
@@ -258,7 +361,7 @@ export function recordPingSample(
   const now = Date.now();
   const next = [...previous.filter((sample) => isFresh(sample, now)), { time, ping }];
   samplesByUuid.set(uuid, thinSamples(next));
-  emit(uuid);
+  refreshSeries(uuid, now);
   schedulePersist();
 }
 
@@ -273,13 +376,10 @@ function sameSeries(a: readonly PingLiveSample[], b: readonly PingLiveSample[]):
 }
 
 /**
- * 把后端下发的窗口并进缓冲区。
+ * 记下后端下发的窗口。
  *
- * 按时间戳取并集，同一时刻以后端为准 —— 不能用「窗口整体替换、只保留比窗口末点更新的本地样本」：
- * 实测后端窗口并不是严格滑动的一小时（线上 7 台节点一致：2 分钟网格铺到约 35 分钟前就停了，
- * 末尾直接追加一个「当前」点，跨度反而有 90 分钟）。窗口末点既然约等于现在，
- * 「只留更新的」就等于把本地样本全判成旧的丢掉，每次 `/api/servers` 同步都会把浏览器
- * 攒下来（并已持久化）的那段擦成空洞 —— 首页柱子于是缺一大段，正是本地缓冲能补上的那段。
+ * 只存一份最新的，不与本地累积做并集 —— 合并规则见 {@link mergeWindowWithLocal}。
+ * 空窗口（旧版后端）直接忽略，让本地累积继续兜底。
  */
 export function seedPingHistory(
   uuid: string,
@@ -289,30 +389,28 @@ export function seedPingHistory(
 
   hydrate();
   const now = Date.now();
-  const fresh = window.filter((sample) => isFresh(sample, now));
+  const fresh = [...window]
+    .filter((sample) => isFresh(sample, now))
+    .sort((left, right) => left.time - right.time);
   if (fresh.length === 0) return;
 
-  const local = samplesByUuid.get(uuid) ?? EMPTY_SAMPLES;
-  const byTime = new Map<number, PingLiveSample>();
-  for (const sample of local) {
-    if (isFresh(sample, now)) byTime.set(sample.time, sample);
-  }
-  // 后端权威：同一时间戳覆盖本地那份。
-  for (const sample of fresh) byTime.set(sample.time, sample);
-  const merged = [...byTime.values()].sort((left, right) => left.time - right.time);
-  const next = thinSamples(merged);
-
-  // 后端窗口每次刷新基本原样返回，内容没变就不要惊动订阅者。
-  if (sameSeries(local, next)) return;
-
-  samplesByUuid.set(uuid, next);
-  emit(uuid);
-  schedulePersist();
+  const previous = windowByUuid.get(uuid);
+  // 后端窗口每次刷新基本原样返回，内容没变就连重算都省掉。
+  if (previous && sameSeries(previous, fresh)) return;
+  windowByUuid.set(uuid, fresh);
+  refreshSeries(uuid, now);
 }
 
 export function getPingHistorySnapshot(uuid: string): readonly PingLiveSample[] {
   hydrate();
-  return samplesByUuid.get(uuid) ?? EMPTY_SAMPLES;
+  const cached = seriesByUuid.get(uuid);
+  if (cached) return cached;
+  // 刚 hydrate 出来的持久化缓冲还没算过合并结果；这里补算并缓存，不能 emit
+  // （getSnapshot 会在 React 渲染期间被调用）。
+  const next = computeSeries(uuid, Date.now());
+  if (next.length === 0) return EMPTY_SAMPLES;
+  seriesByUuid.set(uuid, next);
+  return next;
 }
 
 export function subscribePingHistory(uuid: string, listener: Listener): () => void {
@@ -338,12 +436,20 @@ export function retainPingNodes(uuids: Iterable<string>): void {
     samplesByUuid.delete(uuid);
     changed = true;
   }
+  for (const uuid of [...windowByUuid.keys()]) {
+    if (!keep.has(uuid)) windowByUuid.delete(uuid);
+  }
+  for (const uuid of [...seriesByUuid.keys()]) {
+    if (!keep.has(uuid)) seriesByUuid.delete(uuid);
+  }
   if (changed) schedulePersist();
 }
 
 /** 测试用。 */
 export function resetPingLiveStore(): void {
   samplesByUuid.clear();
+  windowByUuid.clear();
+  seriesByUuid.clear();
   listenersByUuid.clear();
   hydrated = false;
   if (persistTimer != null) {

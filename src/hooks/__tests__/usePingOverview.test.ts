@@ -3,6 +3,7 @@ import {
   buildPingBuckets,
   buildPingOverviewItem,
   resolveHomepagePingRequestMode,
+  withLiveLatency,
 } from "@/hooks/usePingOverview";
 import type { PingLiveSample } from "@/services/pingLiveStore";
 import { EMPTY_CARRIER_PING } from "@/types/cfsm";
@@ -317,5 +318,34 @@ describe("resolveHomepagePingRequestMode", () => {
   it("stays single when multi ping is off or incomplete", () => {
     expect(resolveHomepagePingRequestMode("large", false, [1, 2, 3])).toBe("single");
     expect(resolveHomepagePingRequestMode("large", true, [1, 2])).toBe("single");
+  });
+});
+
+describe("withLiveLatency", () => {
+  const item = buildPingOverviewItem("node-a", 1, [sample(2, { ct: 30 })]);
+  const live = (values: Partial<PingLiveSample["ping"]>) => ({
+    ...EMPTY_CARRIER_PING,
+    ...values,
+  });
+
+  it("数字用 WS 的实时值，窗口末点最多能滞后一格", () => {
+    expect(withLiveLatency(item, live({ ct: 44 }), 1).lastValue).toBe(44);
+  });
+
+  it("只换数字，柱子和丢包率仍按窗口来", () => {
+    const next = withLiveLatency(item, live({ ct: 44 }), 1);
+
+    expect(next.samples).toBe(item.samples);
+    expect(next.loss).toBe(item.loss);
+  });
+
+  it("探测失败（负值）或没有值时保持窗口给的数", () => {
+    expect(withLiveLatency(item, live({ ct: -1 }), 1).lastValue).toBe(30);
+    expect(withLiveLatency(item, live({ cu: 44 }), 1).lastValue).toBe(30);
+  });
+
+  it("值没变就返回原对象，不白白触发重渲染", () => {
+    expect(withLiveLatency(item, live({ ct: 30 }), 1)).toBe(item);
+    expect(withLiveLatency(item, null, 1)).toBe(item);
   });
 });

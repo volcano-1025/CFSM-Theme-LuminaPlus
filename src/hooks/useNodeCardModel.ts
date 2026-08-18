@@ -7,6 +7,8 @@ import {
   useNodePingOverview,
   useNodePingOverviewLines,
   usePingBuckets,
+  useSelectedTaskId,
+  withLiveLatency,
 } from "@/hooks/usePingOverview";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import type { HomepagePingDisplayLine, HomepagePingLine } from "@/types/cfsm";
@@ -64,8 +66,25 @@ export function useNodeCardModel(
     includeMultiPing &&
     enableHomepageMultiPing &&
     homepageMultiPingTaskIds.length === HOMEPAGE_MULTI_PING_TASK_COUNT;
-  const realPing = useNodePingOverview(uuid, !multiPingActive);
-  const realPingLines = useNodePingOverviewLines(uuid, multiPingActive);
+  const windowPing = useNodePingOverview(uuid, !multiPingActive);
+  const windowPingLines = useNodePingOverviewLines(uuid, multiPingActive);
+  // 柱子来自后端窗口，数字用 WS 的实时值补一下 —— 理由见 `withLiveLatency`。
+  // `metrics.ping` 在值没变时会沿用同一个对象，可以直接进依赖数组。
+  const livePing = metrics?.online === true ? metrics.ping : null;
+  const selectedTaskId = useSelectedTaskId(uuid);
+  const realPing = useMemo(
+    () => withLiveLatency(windowPing, livePing, selectedTaskId),
+    [livePing, selectedTaskId, windowPing],
+  );
+  const realPingLines = useMemo<HomepagePingLine[]>(
+    () =>
+      windowPingLines.map((line) => ({
+        ...withLiveLatency(line, livePing, line.taskId),
+        taskId: line.taskId,
+        taskName: line.taskName,
+      })),
+    [livePing, windowPingLines],
+  );
   const hasRealHomepagePingBinding = useMemo(
     () =>
       multiPingActive || hasHomepagePingTaskBinding(uuid, homepagePingBindings),

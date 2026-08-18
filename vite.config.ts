@@ -1,5 +1,5 @@
 import { fileURLToPath, URL } from "node:url";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import pkg from "./package.json" with { type: "json" };
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -51,51 +51,87 @@ function themeVersionMeta(version: string): Plugin {
   };
 }
 
-export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    devHostAssets(),
-    themeVersionMeta(pkg.version),
-  ],
-  // CF-Server-Monitor 的主题构建产物只能是 index.html + assets/，并且会被挂到站点根路径或
-  // GitHub Pages 的子路径下，因此资源引用必须是相对路径。Worker 会把 `./assets/` 重写成
-  // `/assets/` 再代理到主题仓库。
-  base: "./",
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
+/**
+ * 把 `.env` 里的 API_BASE 写进 dev server 服务的 `<meta name="apiBase">`。
+ *
+ * `npm run build:github-page` 是构建完再改 dist/index.html；dev 直接吃源文件 index.html，
+ * 这里用 transformIndexHtml 在内存里替换 content，不落盘、不污染源文件。
+ * 留空时（Workers 同源 / mock 场景）什么都不做，前端回落到 window.location.origin。
+ * 注意后端要把 dev 地址加进跨域白名单，否则请求会被 CORS 挡掉。
+ *
+ * 来自 PR #1（@huilang-me）。
+ */
+function devApiBaseMeta(apiBase: string): Plugin {
+  const escaped = apiBase
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  return {
+    name: "cfsm-dev-api-base",
+    apply: "serve",
+    transformIndexHtml(html) {
+      if (!apiBase) return html;
+      return html.replace(
+        /<meta name="apiBase" content="[^"]*"\s*\/?>/,
+        () => `<meta name="apiBase" content="${escaped}" />`,
+      );
     },
-  },
-  build: {
-    // 与 CSS 实际基线对齐:全站大量 color-mix()/oklch(需 Chrome 111 / Safari 16.2+),
-    // JS 没必要为更老的引擎转译。
-    target: ["es2022", "chrome111", "safari16.2", "firefox113"],
-    assetsDir: "assets",
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          const normalized = id.replace(/\\/g, "/");
-          if (!normalized.includes("/node_modules/")) return;
+  };
+}
 
-          if (
-            /\/node_modules\/(?:react|react-dom|react-router|react-router-dom)\//.test(
-              normalized,
-            )
-          ) {
-            return "react";
-          }
-          if (normalized.includes("/node_modules/@tanstack/react-query/")) {
-            return "query";
-          }
-          if (/\/node_modules\/(?:uplot|uplot-react)\//.test(normalized)) {
-            return "charts";
-          }
-          if (normalized.includes("/node_modules/zod/")) {
-            return "validation";
-          }
+export default defineConfig(({ mode }) => {
+  // 前缀传空串才能读到没有 VITE_ 前缀的 API_BASE（与 scripts/build-static.mjs 的读法一致）。
+  const env = loadEnv(mode, process.cwd(), "");
+  const apiBase = (env.API_BASE ?? "").trim();
+
+  return {
+    plugins: [
+      react(),
+      tailwindcss(),
+      devHostAssets(),
+      themeVersionMeta(pkg.version),
+      devApiBaseMeta(apiBase),
+    ],
+    // CF-Server-Monitor 的主题构建产物只能是 index.html + assets/，并且会被挂到站点根路径或
+    // GitHub Pages 的子路径下，因此资源引用必须是相对路径。Worker 会把 `./assets/` 重写成
+    // `/assets/` 再代理到主题仓库。
+    base: "./",
+    resolve: {
+      alias: {
+        "@": fileURLToPath(new URL("./src", import.meta.url)),
+      },
+    },
+    build: {
+      // 与 CSS 实际基线对齐:全站大量 color-mix()/oklch(需 Chrome 111 / Safari 16.2+),
+      // JS 没必要为更老的引擎转译。
+      target: ["es2022", "chrome111", "safari16.2", "firefox113"],
+      assetsDir: "assets",
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            const normalized = id.replace(/\\/g, "/");
+            if (!normalized.includes("/node_modules/")) return;
+
+            if (
+              /\/node_modules\/(?:react|react-dom|react-router|react-router-dom)\//.test(
+                normalized,
+              )
+            ) {
+              return "react";
+            }
+            if (normalized.includes("/node_modules/@tanstack/react-query/")) {
+              return "query";
+            }
+            if (/\/node_modules\/(?:uplot|uplot-react)\//.test(normalized)) {
+              return "charts";
+            }
+            if (normalized.includes("/node_modules/zod/")) {
+              return "validation";
+            }
+          },
         },
       },
     },
-  },
+  };
 });

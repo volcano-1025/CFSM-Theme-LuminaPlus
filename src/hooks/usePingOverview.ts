@@ -9,6 +9,7 @@ import {
 import { CARRIER_TASK_BY_ID, inferIntervalSeconds } from "@/services/cfsm/mappers";
 import type {
   CarrierKey,
+  CarrierPingSnapshot,
   HomepagePingLine,
   PingOverviewBucket,
   PingOverviewItem,
@@ -29,8 +30,9 @@ import type { NodeViewMode } from "@/utils/themeSettings";
  * 实例详情页的 Ping 图表仍然读历史，那是用户主动打开、单节点一次的请求。
  */
 
-// 首页延迟图表最多显示 24 个 bucket。
-const MAX_VISIBLE_HOMEPAGE_PING_BUCKETS = 24;
+// 首页延迟图表默认显示 30 个 bucket：与后端一小时探测窗口的 30 个槽位一一对应，
+// 一格正好一个后端采样点，不再因为 24/30 除不尽而把相邻槽位混进同一格。
+const MAX_VISIBLE_HOMEPAGE_PING_BUCKETS = 30;
 /** 样本间隔推不出来时的兜底，用于把样本投影到 bucket。 */
 const DEFAULT_SAMPLE_INTERVAL_MS = 60_000;
 /** 后端窗口是 2 分钟一个槽位，本地累积约 50 秒一个；限制在这个区间内。 */
@@ -224,8 +226,29 @@ function usePingSamples(uuid: string, enabled: boolean): readonly PingLiveSample
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
+/**
+ * 柱子按后端窗口画（口径与 `/api/servers` 一致），但旁边那个「当前延迟」数字仍取 WS 的实时值。
+ *
+ * 窗口末点最多滞后一格（2 分钟），快照本身还比 WS 旧十几到几十秒 —— 只看数字会觉得卡住不动。
+ * 丢包率不这么办：它是整段窗口的加权平均，取最后一次采样会把「6 个包丢 1 个」直接顶成 16%，
+ * 而柱子还是全绿。
+ */
+export function withLiveLatency(
+  item: PingOverviewItem,
+  live: CarrierPingSnapshot | null,
+  taskId: number,
+): PingOverviewItem {
+  if (!live || !item.isAssigned) return item;
+  const carrier = CARRIER_TASK_BY_ID.get(taskId)?.key;
+  if (!carrier) return item;
+  const value = live[carrier];
+  // 负值是「这次探测失败」，不是延迟；缺值同理，都保持窗口给的那个数。
+  if (value == null || value < 0 || value === item.lastValue) return item;
+  return { ...item, lastValue: value };
+}
+
 /** 节点在单线路模式下显示哪条线路：设置里指定过就用指定的，否则默认电信。 */
-function useSelectedTaskId(uuid: string): number {
+export function useSelectedTaskId(uuid: string): number {
   const { homepagePingBindings } = useThemeSettings();
   return useMemo(() => {
     const byClient = invertHomepagePingTaskBindings(homepagePingBindings);

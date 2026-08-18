@@ -214,6 +214,10 @@ npm run build       # 产物只含 index.html + assets/
 
 手边没有后端时，用 `http://localhost:5173/?mock=1` 打开内置假数据（4 台节点，含离线与到期状态）。
 
+想连线上后端调试，在仓库根目录建一个 `.env` 写 `API_BASE=https://你的后端`，dev server 会把它
+写进 `<meta name="apiBase">`（`.env` 已在 `.gitignore` 里）。后端那边要把 dev 地址
+`http://localhost:5173` 加进跨域白名单，否则请求会被 CORS 挡掉。
+
 数据层集中在这几个文件，改后端适配基本只碰它们：
 
 - `src/services/cfsm/config.ts` — apiBase / WebSocket 地址 / JWT / Turnstile 凭证

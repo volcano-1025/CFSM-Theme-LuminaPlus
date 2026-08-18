@@ -3,7 +3,7 @@ import type { PingOverviewItem } from "@/types/cfsm";
 // 未绑定首页 Ping 任务的节点用这份前端生成的"模拟延迟"填充卡片,避免与已绑定节点混排时出现
 // "未配置"占位。纯展示数据:不发请求、不代表真实网络质量,是否启用由 fakePingForUnbound 决定。
 
-// 最近一小时、每分钟一个样本,经 usePingBuckets 聚合成首页 24 桶。
+// 最近一小时、每分钟一个样本,经 usePingBuckets 聚合成首页 30 桶。
 const FAKE_SAMPLE_COUNT = 60;
 const MINUTE_MS = 60_000;
 export const FAKE_PING_MIN_MS = 1;
