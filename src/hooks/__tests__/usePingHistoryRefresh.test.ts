@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   RECENT_REFRESH_WINDOW_MS,
+  resolveStatusHoldMs,
   shouldRemindRecentRefresh,
 } from "@/hooks/usePingHistoryRefresh";
 
@@ -27,5 +28,22 @@ describe("30 分钟内重复刷新的提醒判定", () => {
 
   it("时钟被往回调过（上次刷新在未来）不提醒，否则会永久卡住", () => {
     expect(shouldRemindRecentRefresh(NOW + 60 * 60_000, NOW)).toBe(false);
+  });
+});
+
+describe("提示条停留时长", () => {
+  it("警告条必须比结果提示活得久：它同时是「再点一次就刷」的有效期", () => {
+    // 两者一样长的时候，读完警告再去点就已经过期，会无限重新警告、永远刷不了。
+    expect(resolveStatusHoldMs("warn")).toBeGreaterThan(resolveStatusHoldMs("done"));
+    expect(resolveStatusHoldMs("warn")).toBeGreaterThan(resolveStatusHoldMs("error"));
+  });
+
+  it("警告的有效期够读完那句话再点（至少 10 秒）", () => {
+    expect(resolveStatusHoldMs("warn")).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it("完成和失败共用短提示", () => {
+    expect(resolveStatusHoldMs("done")).toBe(resolveStatusHoldMs("error"));
+    expect(resolveStatusHoldMs("idle")).toBe(resolveStatusHoldMs("done"));
   });
 });

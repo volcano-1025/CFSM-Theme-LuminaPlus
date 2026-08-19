@@ -4,8 +4,21 @@ import { useVisibleNodeUuids } from "@/hooks/useNode";
 
 export type PingHistoryRefreshStatus = "idle" | "loading" | "done" | "error" | "warn";
 
-/** 刷新结果的提示保留多久，之后按钮回到静默态。 */
+/** 刷新结果（完成/失败）的提示保留多久，之后按钮回到静默态。 */
 const RESULT_HOLD_MS = 4_000;
+/**
+ * 警告条要停留得久得多 —— 它同时是「再点一次就刷」的有效期。
+ *
+ * 原来和结果提示共用 4 秒，于是读完那句话再去点，授权已经过期、又弹一次警告，
+ * 慢慢点永远刷不了（实测两次间隔 5 秒的点击都只是重新警告、一个请求没发）。
+ * 现在给到 15 秒，「警告还挂着 = 再点就刷」这条规则才和屏幕上看到的一致。
+ */
+const WARN_HOLD_MS = 15_000;
+
+/** 某个状态的提示该停留多久。警告必须比结果提示久，理由见 {@link WARN_HOLD_MS}。 */
+export function resolveStatusHoldMs(status: PingHistoryRefreshStatus): number {
+  return status === "warn" ? WARN_HOLD_MS : RESULT_HOLD_MS;
+}
 /**
  * 距上次刷新不到这么久就再点，先提醒一次。
  *
@@ -108,10 +121,10 @@ export function usePingHistoryRefresh(): PingHistoryRefreshState {
     if (holdTimerRef.current != null) clearTimeout(holdTimerRef.current);
     holdTimerRef.current = setTimeout(() => {
       holdTimerRef.current = null;
-      // 提醒条一收，「再点一次」的授权也跟着过期。
+      // 提醒条一收，「再点一次」的授权也跟着过期 —— 所以警告条的存活时间就是授权时长。
       armedRef.current = false;
       if (mountedRef.current) setStatus("idle");
-    }, RESULT_HOLD_MS);
+    }, resolveStatusHoldMs(next));
   }, []);
 
   const refresh = useCallback(() => {
