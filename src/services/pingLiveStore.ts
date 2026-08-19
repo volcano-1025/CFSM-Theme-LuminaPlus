@@ -33,6 +33,20 @@ export interface PingLiveSample {
   weight?: number;
 }
 
+/**
+ * 最近一次 `/api/servers` 窗口的成色。
+ *
+ * 只记「后端给了几格、其中几格是复印段」两个数 —— 首页的自检要凭它判断
+ * 「柱子空成这样是后端在编数据，还是这台本来就没数据」，见 `@/utils/pingWindowHealth`。
+ */
+export interface PingWindowStats {
+  /** 后端下发、且还在一小时内的格数。0 表示旧版后端没有这个字段。 */
+  slots: number;
+  /** 其中被 {@link dropBackfilledRuns} 判成复印段丢掉的格数。 */
+  dropped: number;
+  seededAt: number;
+}
+
 type Listener = () => void;
 
 /**
@@ -89,6 +103,8 @@ const samplesByUuid = new Map<string, readonly PingLiveSample[]>();
 const windowByUuid = new Map<string, readonly PingLiveSample[]>();
 /** 对外可见的合并结果，引用稳定（`useSyncExternalStore` 要求）。 */
 const seriesByUuid = new Map<string, readonly PingLiveSample[]>();
+/** 最近一次窗口下发的成色，给「数据是不是有问题」的自检用。 */
+const windowStatsByUuid = new Map<string, PingWindowStats>();
 const listenersByUuid = new Map<string, Set<Listener>>();
 let hydrated = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -518,11 +534,15 @@ export function seedPingHistory(
 
   hydrate();
   const now = Date.now();
-  const fresh = dropBackfilledRuns(
-    [...window]
-      .filter((sample) => isFresh(sample, now))
-      .sort((left, right) => left.time - right.time),
-  );
+  const usable = [...window]
+    .filter((sample) => isFresh(sample, now))
+    .sort((left, right) => left.time - right.time);
+  const fresh = dropBackfilledRuns(usable);
+  windowStatsByUuid.set(uuid, {
+    slots: usable.length,
+    dropped: usable.length - fresh.length,
+    seededAt: now,
+  });
 
   const previous = windowByUuid.get(uuid);
   // 整段都是复印件时 fresh 为空：也要落盘，否则上一份（含复印件的）窗口会一直留着。
@@ -573,6 +593,11 @@ export function seedMeasuredHistory(
   schedulePersist();
 }
 
+/** 最近一次窗口下发的成色；没收到过窗口时返回 null。 */
+export function getPingWindowStats(uuid: string): PingWindowStats | null {
+  return windowStatsByUuid.get(uuid) ?? null;
+}
+
 export function getPingHistorySnapshot(uuid: string): readonly PingLiveSample[] {
   hydrate();
   const cached = seriesByUuid.get(uuid);
@@ -611,6 +636,9 @@ export function retainPingNodes(uuids: Iterable<string>): void {
   for (const uuid of [...windowByUuid.keys()]) {
     if (!keep.has(uuid)) windowByUuid.delete(uuid);
   }
+  for (const uuid of [...windowStatsByUuid.keys()]) {
+    if (!keep.has(uuid)) windowStatsByUuid.delete(uuid);
+  }
   for (const uuid of [...seriesByUuid.keys()]) {
     if (!keep.has(uuid)) seriesByUuid.delete(uuid);
   }
@@ -621,6 +649,7 @@ export function retainPingNodes(uuids: Iterable<string>): void {
 export function resetPingLiveStore(): void {
   samplesByUuid.clear();
   windowByUuid.clear();
+  windowStatsByUuid.clear();
   seriesByUuid.clear();
   listenersByUuid.clear();
   hydrated = false;

@@ -1832,3 +1832,152 @@ body::after {
   }
 
 }
+
+/* ------------------------------------------------------------------ *
+ * 打开页面时的延迟数据自检弹窗
+ * ------------------------------------------------------------------ */
+
+/* z-index 要压过快捷栏（90）：这是一次要用户做决定的打断，不能被悬浮球盖住。 */
+.ping-health-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, #000 38%, transparent);
+  backdrop-filter: blur(2px);
+  animation: ping-health-overlay-in 160ms ease-out;
+}
+
+.ping-health-dialog {
+  width: min(420px, 100%);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-elev);
+  box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.65);
+  padding: 16px;
+  animation: ping-health-dialog-in 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.ping-health-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ping-health-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--status-warning) 16%, transparent);
+  color: var(--status-warning);
+}
+
+.ping-health-title {
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ping-health-close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 999px;
+  color: var(--text-tertiary);
+}
+
+.ping-health-close:hover {
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+}
+
+.ping-health-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+/* 成本那一段单独起一块底色——它是这个弹窗真正要用户看清的部分。 */
+.ping-health-cost {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  padding: 8px 10px;
+}
+
+.ping-health-cost strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.ping-health-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.ping-health-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ping-health-button.is-skip {
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.ping-health-button.is-skip:hover {
+  background: var(--hover-bg);
+}
+
+.ping-health-button.is-refresh {
+  border-color: color-mix(in srgb, var(--accent-500) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent-500) 12%, transparent);
+  color: var(--accent-strong);
+}
+
+.ping-health-button.is-refresh:hover {
+  background: color-mix(in srgb, var(--accent-500) 20%, transparent);
+}
+
+@keyframes ping-health-overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes ping-health-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ping-health-overlay,
+  .ping-health-dialog {
+    animation: none;
+  }
+}

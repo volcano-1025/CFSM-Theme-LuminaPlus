@@ -47,7 +47,8 @@ export function shouldRemindRecentRefresh(
 /** 上次刷新时间要跨刷新保留，否则按 F5 就能绕开提醒。 */
 const LAST_REFRESH_STORAGE_KEY = "cfsm-luminaplus:ping-refresh-at:v1";
 
-function readLastRefreshedAt(): number | null {
+/** 上次刷新时间。首页的数据自检要用它判断「是不是刚花过 D1」，因此导出。 */
+export function readLastPingRefreshAt(): number | null {
   try {
     const raw = window.localStorage.getItem(LAST_REFRESH_STORAGE_KEY);
     if (!raw) return null;
@@ -75,7 +76,17 @@ export interface PingHistoryRefreshState {
   lastRefreshedAt: number | null;
   /** `warn` 状态下距上次刷新过了几分钟（向下取整），用来写提示文案。 */
   minutesSinceLastRefresh: number | null;
-  refresh: () => void;
+  refresh: (options?: PingHistoryRefreshOptions) => void;
+}
+
+export interface PingHistoryRefreshOptions {
+  /**
+   * 跳过「30 分钟内刷新过」的提醒，直接刷。
+   *
+   * 给数据自检弹窗用：那个弹窗已经把请求数和 D1 读行写在脸上了，用户点的就是确认键，
+   * 再拦一道只会变成「点了没反应」。
+   */
+  skipReminder?: boolean;
 }
 
 /**
@@ -104,7 +115,7 @@ export function usePingHistoryRefresh(): PingHistoryRefreshState {
 
   useEffect(() => {
     mountedRef.current = true;
-    const stored = readLastRefreshedAt();
+    const stored = readLastPingRefreshAt();
     if (stored != null) {
       lastRefreshedAtRef.current = stored;
       setLastRefreshedAt(stored);
@@ -127,12 +138,16 @@ export function usePingHistoryRefresh(): PingHistoryRefreshState {
     }, resolveStatusHoldMs(next));
   }, []);
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback((options?: PingHistoryRefreshOptions) => {
     if (pendingRef.current || uuids.length === 0) return;
 
     const previous = lastRefreshedAtRef.current;
     const now = Date.now();
-    if (!armedRef.current && shouldRemindRecentRefresh(previous, now)) {
+    if (
+      !options?.skipReminder &&
+      !armedRef.current &&
+      shouldRemindRecentRefresh(previous, now)
+    ) {
       armedRef.current = true;
       setMinutesSinceLastRefresh(Math.floor((now - previous!) / 60_000));
       settle("warn");

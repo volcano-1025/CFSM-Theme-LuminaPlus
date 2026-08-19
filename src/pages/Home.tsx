@@ -2,8 +2,11 @@ import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { NodeGrid } from "@/components/node/NodeGrid";
 import { FloatingControls } from "@/components/shell/FloatingControls";
+import { PingHealthDialog } from "@/components/shell/PingHealthDialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { useNodeStoreStatus } from "@/hooks/useNode";
+import { usePingDataHealthPrompt } from "@/hooks/usePingDataHealth";
+import { usePingHistoryRefresh } from "@/hooks/usePingHistoryRefresh";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 
 const ThemeManage = lazy(() =>
@@ -15,13 +18,31 @@ function HomeDashboard() {
   const themeSettings = useThemeSettings();
   const { hydrated: storeHydrated } = useNodeStoreStatus();
   const homeReady = themeSettings.isReady && storeHydrated;
+  // 刷新状态机放在这一层：快捷栏的按钮和自检弹窗点的是同一次刷新，各自持有一份状态
+  // 会让「请求在途」的互斥失效，连点就把请求打两遍。
+  const pingRefresh = usePingHistoryRefresh();
+  const pingHealth = usePingDataHealthPrompt(homeReady);
 
   return (
     <div
       className={`home-dashboard relative pb-2${controlsExpanded ? " is-controls-expanded" : ""}`}
     >
-      {homeReady && <FloatingControls onExpandedChange={setControlsExpanded} />}
+      {homeReady && <FloatingControls onExpandedChange={setControlsExpanded} pingRefresh={pingRefresh} />}
       <NodeGrid />
+      {pingHealth.summary && (
+        <PingHealthDialog
+          summary={pingHealth.summary}
+          nodeCount={pingHealth.nodeCount}
+          estimatedRows={pingHealth.estimatedRows}
+          onRefresh={() => {
+            pingHealth.dismiss();
+            // 弹窗里已经把请求数和读行数写清楚了，用户点的就是确认键，
+            // 不该再被「30 分钟内刷新过」的提醒拦一道。
+            pingRefresh.refresh({ skipReminder: true });
+          }}
+          onSkip={pingHealth.dismiss}
+        />
+      )}
     </div>
   );
 }

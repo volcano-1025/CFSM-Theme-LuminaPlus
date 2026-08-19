@@ -6,7 +6,7 @@ import { useViewMode } from "@/hooks/useViewMode";
 import { useNodeStoreStatus } from "@/hooks/useNode";
 import { useAuth } from "@/hooks/useAuth";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
-import { usePingHistoryRefresh, type PingHistoryRefreshState } from "@/hooks/usePingHistoryRefresh";
+import type { PingHistoryRefreshState } from "@/hooks/usePingHistoryRefresh";
 import { getAdminUrl } from "@/services/cfsm/config";
 import type { NodeViewMode } from "@/utils/themeSettings";
 import { clsx } from "clsx";
@@ -84,15 +84,17 @@ const APPEARANCE_OPTIONS = [
 
 export function FloatingControls({
   onExpandedChange,
+  pingRefresh,
 }: {
   onExpandedChange?: (expanded: boolean) => void;
+  /** 由首页持有：刷新按钮和数据自检弹窗共用同一份状态，见 `Home.tsx`。 */
+  pingRefresh: PingHistoryRefreshState;
 }) {
   const { appearance, setAppearance } = usePreferences();
   const { mode, nextMode, toggleMode } = useViewMode();
   const { data: me } = useAuth();
   const themeSettings = useThemeSettings();
   const { failureStreak } = useNodeStoreStatus();
-  const pingRefresh = usePingHistoryRefresh();
   const [collapsed, setCollapsed] = useState(true);
   const [colorsOpen, setColorsOpen] = useState(false);
   const [colorsMounted, setColorsMounted] = useState(false);
@@ -232,7 +234,7 @@ export function FloatingControls({
             aria-busy={pingRefresh.status === "loading"}
             title={refreshTitle}
             disabled={pingRefresh.nodeCount === 0 || pingRefresh.status === "loading"}
-            onClick={pingRefresh.refresh}
+            onClick={() => pingRefresh.refresh()}
           >
             {refreshDone ? (
               <Check size={16} />
