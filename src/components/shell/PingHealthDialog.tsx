@@ -72,10 +72,6 @@ export function PingHealthDialog({
         </div>
         <div id="ping-health-body" className="ping-health-body">
           <p>{buildSymptomText(summary)}</p>
-          <p>
-            后端补这一小时窗口时，会把最近一次探测结果复制到没数据的格子里。主题会把复制出来的
-            那几段丢掉（宁可留空也不画编的），所以卡片上看到的是空缺。
-          </p>
           <p className="ping-health-cost">
             刷新会给每台节点各查一次最近 1 小时的真实采样：
             <strong>{nodeCount} 个请求</strong>，后端约读{" "}
