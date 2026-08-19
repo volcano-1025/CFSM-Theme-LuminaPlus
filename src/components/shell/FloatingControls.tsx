@@ -37,6 +37,7 @@ function buildRefreshTitle({
   lastRefreshedAt,
 }: PingHistoryRefreshState): string {
   if (status === "loading") return `正在拉取 ${nodeCount} 台节点最近 1 小时的延迟历史…`;
+  if (status === "warn") return "30 分钟内已经刷新过；确实要再拉一次就再点一下";
   if (status === "error") {
     return lastResult && lastResult.succeeded > 0
       ? `部分节点刷新失败（${lastResult.failed}/${lastResult.requested}），点击重试`
@@ -56,7 +57,15 @@ function buildRefreshTitle({
 function buildRefreshToast({
   status,
   lastResult,
+  minutesSinceLastRefresh,
 }: PingHistoryRefreshState): string | null {
+  if (status === "warn") {
+    const ago =
+      minutesSinceLastRefresh == null || minutesSinceLastRefresh < 1
+        ? "刚刚"
+        : `${minutesSinceLastRefresh} 分钟前`;
+    return `${ago}才刷新过，数据没长多少 · 再点一次仍会刷新`;
+  }
   if (status === "done") {
     if (!lastResult) return "延迟数据已更新";
     return lastResult.failed > 0
@@ -107,6 +116,7 @@ export function FloatingControls({
   const refreshTitle = buildRefreshTitle(pingRefresh);
   const refreshToast = buildRefreshToast(pingRefresh);
   const refreshDone = pingRefresh.status === "done";
+  const refreshWarn = pingRefresh.status === "warn";
 
   const toggleControls = () => {
     // 收起快捷栏时同时结束子面板状态，避免下次展开时调色盘自动复现。
@@ -215,6 +225,7 @@ export function FloatingControls({
             className={clsx(
               "control-button floating-controls-refresh grid h-9 w-9 place-items-center",
               refreshDone && "is-refresh-done",
+              refreshWarn && "is-refresh-warn",
               pingRefresh.status === "error" && "is-refresh-error",
             )}
             aria-label="刷新延迟数据"
@@ -225,6 +236,8 @@ export function FloatingControls({
           >
             {refreshDone ? (
               <Check size={16} />
+            ) : refreshWarn ? (
+              <AlertTriangle size={16} />
             ) : (
               <RefreshCw
                 size={16}
@@ -259,7 +272,7 @@ export function FloatingControls({
           <div
             className={clsx(
               "floating-controls-refresh-toast pointer-events-none flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium shadow-[0_10px_25px_-18px_rgba(0,0,0,0.8)] backdrop-blur",
-              refreshDone ? "is-done" : "is-error",
+              refreshDone ? "is-done" : refreshWarn ? "is-warn" : "is-error",
             )}
             role="status"
           >

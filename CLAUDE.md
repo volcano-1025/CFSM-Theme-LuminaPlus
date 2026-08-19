@@ -37,6 +37,8 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   4.7 万行 —— 差 60 倍，症结在「自动还是手动」，不在「用了历史数据」。
   后端对 1 小时档有 60 秒服务端缓存（响应带 `X-Cache`），连点不会真的重复读库。
   **不要把这个刷新挂到定时器、可见性变化、或路由进入上** —— 那就变回被禁的那种用法了。
+  30 分钟内重复点击会先提醒一次、不发请求（`shouldRemindRecentRefresh`），上次刷新时间存
+  localStorage 所以 F5 绕不过；这是提醒不是冷却，再点一次照样放行。
 - **产物目录只能有 `index.html` 和 `assets/`**，CI 有校验步骤。
 - **产物分支（`dist` / `dist-preview`）只追加提交，绝不 force-push**：主题商店的
   `versions[].commitid` 和用户锁定的 SHA 指向历史提交，重写会让旧版本用户失效。
