@@ -41,6 +41,8 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   **不要把这个刷新挂到定时器、可见性变化、或路由进入上** —— 那就变回被禁的那种用法了。
   v1.2.9 的开页自检（`usePingDataHealthPrompt`）**跑在页面加载后**，但它只读已经拿到的窗口和
   本地缓冲、一个请求都不发，发请求的仍然是用户在弹窗里点的那一下 —— 这条边界别弄丢了。
+  站长可以用 `enablePingHealthPrompt` 关掉整个自检（设置页「主页延迟检测」那一栏），
+  所以「弹窗从来不出现」先看这个开关，别当成判定逻辑坏了。
   30 分钟内重复点击会先提醒一次、不发请求（`shouldRemindRecentRefresh`），上次刷新时间存
   localStorage 所以 F5 绕不过；这是提醒不是冷却，再点一次照样放行。
 - **产物目录只能有 `index.html` 和 `assets/`**，CI 有校验步骤。
@@ -74,6 +76,15 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   —— 加新的非白名单设置时记得一并考虑导出。
 - **本机设置永远压过后台预设**：合并口径是 `{...后台 theme_options, ...localStorage}`，
   访客存过设置后，站长再改后台 JSON 也传不过去，只能靠设置页的「同步后台配置」清掉本地那份。
+- **后台改「主题自定义配置」不是立刻生效，先等两分钟再判**：后端 `loadAppearanceOptions` 有
+  2 分钟内存缓存（`src/utils/settings.js` 的 `SITE_SETTINGS_TTL`，读的是 huilang-me/CF-Server-Monitor），
+  保存时会清缓存，但每个 Worker isolate 各存一份，换台设备打开照样可能拿到旧的。
+  2026-08-21 栽过一次：站长粘了新键、新浏览器打开还是旧行为，等一会儿自己就好了。
+  收到「后台设的某项不生效」，按顺序查两件事，别先动主题的合并逻辑 ——
+  ① `fetch('/api/config').then(r=>r.json()).then(c=>console.log(c.theme_options))` 看后端到底下发了什么；
+  ② `fetch(document.querySelector('script[type=module]').src).then(r=>r.text()).then(t=>console.log(t.includes('那个键')))`
+  看**当前跑的产物认不认这个键** —— Workers 对分支地址缓存约 1 小时，很可能还是上一版产物，
+  新加的设置键在旧包里根本不存在（实测 `dist-preview` 的 `2c955a8` 里 0 次、`0b66991` 里 4 次）。
 - **首页卡片和详情页图表的丢包率对不上是正常的，别去「修」**：`/api/servers` 的 30 格窗口
   并不是把历史行聚合出来的，实测是每 4~6 分钟取一个点、再向后填充进 2 分钟的格子
   （ping 值成对重复即为证）。于是短促的丢包要么整段漏掉（线上实例：窗口 30 格全 0，
@@ -174,13 +185,15 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-v1.2.8 已发布（2026-08-19），`dist` 头是产物提交 `5199ea1`。这一版四件事：首页右上角的
-手动刷新按钮、`dropBackfilledRuns` 丢弃后端窗口里的复印段、刷新的完成/失败提示、
-30 分钟内重复点击先提醒。408 项测试通过。
+v1.2.9 已发布（2026-08-21），`dist` 头是产物提交 `4b0192e`。这一版三件事：
+① 开页自检延迟数据、柱子大片空缺就弹窗问要不要刷新（`usePingDataHealthPrompt`，
+设置里可关 —— `enablePingHealthPrompt`）；② 触屏能点柱子看数值（`touchBucketPick.ts`）；
+③ README 去掉早已下线的「今日流量」。439 项测试通过。
 
-**注意：站长 2026-08-19 把线上站点换成了别的主题**，所以这一版没有在真实面板上验收过 ——
-产物本身已核对（版本号、目录、关键文案都在包里），但「线上跑起来是什么样」是 pending。
-换回来的话地址是 `.../tree/5199ea1e9fe82530454b62941299ce9e088c094d`。
+线上验收过的部分：站长在真实面板上看到了弹窗（8 台全中、约 900 行 D1，与这里记的账对得上），
+后台预设关弹窗也生效了（先没生效是后端 2 分钟缓存，见「容易踩的坑」）。**触屏点柱子的真机手感
+还没有人反馈** —— 桌面端和模拟移动端验过（气泡、命中、自动收起、列表不跳转），真机是 pending。
+v1.2.8 那条「站长换成了别的主题」已经不成立：现在跑的就是本主题。
 主题商店里的版本登记由站长自己更新，代码这边推完 `main` 就算完。
 
 v1.2.7（2026-08-18）把首页延迟/丢包的数据口径整个翻过来了（窗口权威 → 实测权威），起因是
@@ -201,5 +214,5 @@ v1.2.7（2026-08-18）把首页延迟/丢包的数据口径整个翻过来了（
 其余没有排期的功能，以线上反馈的修复为主。
 
 v1.2.5 遗留：`src/pages/Traffic.tsx`、`useTodayTrafficStats`、`utils/trafficStats.ts` 与
-`components/traffic/` 已无人引用（`#/traffic` 路由与首页入口都摘掉了，2026-08-18 复核仍是
-唯一引用者就是它们自己），刻意留着以便日后恢复；真要删就连 `traffic-stats.css` 与两个测试一起清。
+`components/traffic/` 已无人引用（`#/traffic` 路由与首页入口都摘掉了，2026-08-21 复核仍是
+唯一引用者就是它们自己和各自的测试），刻意留着以便日后恢复；真要删就连 `traffic-stats.css` 与两个测试一起清。
