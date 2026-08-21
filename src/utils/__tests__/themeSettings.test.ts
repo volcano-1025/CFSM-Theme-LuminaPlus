@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeThemeSettings } from "@/utils/themeSettings";
+import { DEFAULT_THEME_SETTINGS, normalizeThemeSettings } from "@/utils/themeSettings";
 
 describe("normalizeThemeSettings", () => {
   it("keeps mini and falls unknown saved view modes back to compact", () => {
@@ -105,6 +105,23 @@ describe("normalizeThemeSettings", () => {
     const pasted = normalizeThemeSettings(JSON.parse(JSON.stringify(snapshot)) as never);
 
     expect(pasted).toEqual(snapshot);
+  });
+
+  it("每一个布尔设置都要能被 JSON 覆盖：漏接一个，「复制配置 JSON」就同步不过去", () => {
+    // 这条是结构性护栏，不是某个设置的用例。加新设置时容易只写了类型、默认值和设置页开关，
+    // 忘了在 normalizeThemeSettings 里读它 —— TS 查不出来（默认值把字段填上了），
+    // 表现是：本机点得动，导出的 JSON 里也有这个键，粘到后台却永远是默认值。
+    const missed: string[] = [];
+    for (const [key, value] of Object.entries(DEFAULT_THEME_SETTINGS)) {
+      if (typeof value !== "boolean") continue;
+      const flipped = normalizeThemeSettings({ [key]: !value } as never) as unknown as Record<
+        string,
+        unknown
+      >;
+      if (flipped[key] !== !value) missed.push(key);
+    }
+
+    expect(missed).toEqual([]);
   });
 
   it("defaults 卡片显示价格 to on and honours an explicit false", () => {
