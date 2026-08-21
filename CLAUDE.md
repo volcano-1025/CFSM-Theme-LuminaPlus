@@ -157,6 +157,17 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   一个 —— 持续一两分钟的丢包在长区间可能整段没被采到（同一次丢包 1 小时图可见、1 天图消失）。
   另：未登录访客查超过 24 小时会返回 **401**，`Instance.tsx` 已按登录态把档位卡住，别误判成
   「后端没数据」。
+- **柱子的数值在触屏上靠「点选」，不是 hover**（v1.2.9）：`supportsFineHover()` 在触屏恒为 false，
+  所以手机上那排延迟/丢包格子原来点了没反应。三种渲染层各自实现（canvas 的 `CanvasStrip`、
+  紧凑卡的 DOM、迷你卡的 SVG），共用 `touchBucketPick.ts` 的两条口径：命中按**整条宽度均分**
+  （一根柱子连间距才 4~5px，按柱子自己的范围算点不中），气泡在抬手后再留 2.5 秒（触屏没有
+  「移开鼠标」，不自动收就一直挂着）。三处配套细节别拆掉：① `compact-node-card.css` 里
+  `@media (any-hover: none)` 那块 `content-box` + `padding-block` + 等量负 margin 是**命中区**，
+  纵向撑开而占位不变，横向一动命中换算就偏；② `CanvasStrip` 在触屏点选后会 `preventDefault` 掉
+  那一次 click —— 列表视图整行是 `<Link>`，不挡就变成「想看数值结果跳走了」；③ 手指按着才跟随
+  （`event.buttons`/pointer 捕获），触屏没有悬停，无条件跟随会把刚点的那格立刻抹掉。
+  验证时注意：浏览器面板隐藏时自动化点击只发得出 pointerdown，抬手事件根本没派发，
+  「气泡不收」是工具的假象，不是 bug（要用合成事件补 pointerup 才测得准）。
 - **标签分隔符两种都要认**（`parseTags`）：后台输入框的提示是「英文逗号割开」，而移植自 Komari
   的代码原本只切分号 —— 从 Komari 迁过来的站点数据里是分号，本后端按提示填的是逗号，两种数据
   同时存在。全角 `，；` 也认（中文输入法误打），标签名里本来就不该有分隔符。

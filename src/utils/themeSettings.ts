@@ -36,6 +36,7 @@ export interface ResolvedThemeSettings {
   enableHomepageMultiPing: boolean;
   homepageMultiPingTaskIds: number[];
   fakePingForUnbound: boolean;
+  enablePingHealthPrompt: boolean;
   showHomeOverview: boolean;
   showGroupTabs: boolean;
   showRegionBar: boolean;
@@ -75,6 +76,7 @@ export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
   enableHomepageMultiPing: true,
   homepageMultiPingTaskIds: [...DEFAULT_HOMEPAGE_MULTI_PING_TASK_IDS],
   fakePingForUnbound: false,
+  enablePingHealthPrompt: true,
   showHomeOverview: true,
   showGroupTabs: true,
   showRegionBar: true,
@@ -188,6 +190,8 @@ export function normalizeThemeSettings(
     homepageMultiPingTaskIds,
     // 默认关闭(需手动开启):给访客展示的是模拟数据,必须由站长显式决定。
     fakePingForUnbound: settings?.fakePingForUnbound === true,
+    // 默认开：数据不对的时候没人会主动去按刷新，得有人提一句。嫌吵可以关。
+    enablePingHealthPrompt: enabledUnlessFalse(settings?.enablePingHealthPrompt),
     showHomeOverview: enabledUnlessFalse(settings?.showHomeOverview),
     showGroupTabs: enabledUnlessFalse(settings?.showGroupTabs),
     showRegionBar: enabledUnlessFalse(settings?.showRegionBar),

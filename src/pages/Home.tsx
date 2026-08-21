@@ -21,7 +21,10 @@ function HomeDashboard() {
   // 刷新状态机放在这一层：快捷栏的按钮和自检弹窗点的是同一次刷新，各自持有一份状态
   // 会让「请求在途」的互斥失效，连点就把请求打两遍。
   const pingRefresh = usePingHistoryRefresh();
-  const pingHealth = usePingDataHealthPrompt(homeReady);
+  // 站长可以在主题设置里关掉这个提醒（`enablePingHealthPrompt`）；关了就连自检都不跑。
+  const pingHealth = usePingDataHealthPrompt(
+    homeReady && themeSettings.enablePingHealthPrompt,
+  );
 
   return (
     <div

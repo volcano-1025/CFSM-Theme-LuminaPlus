@@ -1,4 +1,4 @@
-import { memo, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowDown,
@@ -16,6 +16,7 @@ import { Flag } from "@/components/ui/Flag";
 import { OsLogo } from "@/components/ui/OsLogo";
 import { IpStackBadges } from "./IpStackBadges";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
+import { resolveTouchBucketIndex, TOUCH_BUCKET_HOLD_MS } from "./touchBucketPick";
 import { useNodeCardModel } from "@/hooks/useNodeCardModel";
 import { speedRateColor } from "@/utils/metricTone";
 import { supportsFineHover } from "@/utils/mediaQuery";
@@ -268,8 +269,29 @@ function MiniHealthBars({
 }) {
   const width = Math.max(1, buckets.length * 4 - 1);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const touchHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoveredBucket = hoveredIndex == null ? null : (buckets[hoveredIndex] ?? null);
   const tooltip = hoveredBucket ? formatHealthBucketTooltip(hoveredBucket, kind) : null;
+
+  useEffect(
+    () => () => {
+      if (touchHoldTimerRef.current != null) clearTimeout(touchHoldTimerRef.current);
+    },
+    [],
+  );
+
+  const pickIndex = (clientX: number, rect: DOMRect) =>
+    setHoveredIndex(resolveTouchBucketIndex(clientX, rect, buckets.length));
+
+  /** 触屏：按下就选中，抬手后再留一会儿（口径见 `touchBucketPick`）。 */
+  const handleTouchPick = (clientX: number, rect: DOMRect) => {
+    pickIndex(clientX, rect);
+    if (touchHoldTimerRef.current != null) clearTimeout(touchHoldTimerRef.current);
+    touchHoldTimerRef.current = setTimeout(() => {
+      touchHoldTimerRef.current = null;
+      setHoveredIndex(null);
+    }, TOUCH_BUCKET_HOLD_MS);
+  };
 
   return (
     <div className="mini-health-chart-wrap">
@@ -278,17 +300,25 @@ function MiniHealthBars({
         viewBox={`0 0 ${width} 16`}
         preserveAspectRatio="none"
         aria-hidden
+        onPointerDown={(event) => {
+          if (supportsFineHover(event.pointerType)) return;
+          handleTouchPick(event.clientX, event.currentTarget.getBoundingClientRect());
+        }}
         onPointerMove={(event) => {
           if (!supportsFineHover(event.pointerType)) {
-            setHoveredIndex(null);
+            // 手指按着才跟随；触屏没有悬停，抬着手划过来不该动它。
+            if (event.buttons !== 0) {
+              handleTouchPick(event.clientX, event.currentTarget.getBoundingClientRect());
+            }
             return;
           }
-          const rect = event.currentTarget.getBoundingClientRect();
-          if (rect.width <= 0 || buckets.length === 0) return;
-          const ratio = (event.clientX - rect.left) / rect.width;
-          setHoveredIndex(Math.max(0, Math.min(buckets.length - 1, Math.floor(ratio * buckets.length))));
+          pickIndex(event.clientX, event.currentTarget.getBoundingClientRect());
         }}
-        onPointerLeave={() => setHoveredIndex(null)}
+        onPointerLeave={() => {
+          // 触屏那份有自己的收尾计时，别被这里抢先清掉。
+          if (touchHoldTimerRef.current != null) return;
+          setHoveredIndex(null);
+        }}
       >
         {buckets.map((bucket, index) => {
           const slot = healthBarSlotModel(bucket, kind);

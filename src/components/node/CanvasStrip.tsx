@@ -7,6 +7,7 @@ import {
   type PointerEvent,
 } from "react";
 import { supportsFineHover } from "@/utils/mediaQuery";
+import { TOUCH_BUCKET_HOLD_MS } from "./touchBucketPick";
 
 export interface CanvasStripInteraction {
   hoverIndex: number | null;
@@ -394,6 +395,11 @@ export function CanvasStrip({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastHoverIndexRef = useRef<number | null>(null);
   const hoverAnimationFrameRef = useRef<number | null>(null);
+  /** 触屏那一根手指的 id；null = 现在没有触摸在按着。 */
+  const touchPointerRef = useRef<number | null>(null);
+  /** 这一下点击是「看数值」，不是「打开详情」—— 列表视图整行是个 Link，要挡住它。 */
+  const touchPickedRef = useRef(false);
+  const touchHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interactionRef = useRef<CanvasStripInteraction>({ hoverIndex: null, hoverProgress: 0 });
   const [interaction, setInteraction] = useState<CanvasStripInteraction>(interactionRef.current);
   const [width, setWidth] = useState(0);
@@ -443,6 +449,7 @@ export function CanvasStrip({
       if (hoverAnimationFrameRef.current != null) {
         cancelAnimationFrame(hoverAnimationFrameRef.current);
       }
+      if (touchHoldTimerRef.current != null) clearTimeout(touchHoldTimerRef.current);
     },
     [],
   );
@@ -497,6 +504,12 @@ export function CanvasStrip({
     draw(ctx, width, height, interaction);
   }, [dpr, draw, height, interaction, redrawKey, visible, width]);
 
+  const clearTouchHoldTimer = () => {
+    if (touchHoldTimerRef.current == null) return;
+    clearTimeout(touchHoldTimerRef.current);
+    touchHoldTimerRef.current = null;
+  };
+
   const handlePointerLeave = () => {
     if (lastHoverIndexRef.current === null) return;
     const previous = lastHoverIndexRef.current;
@@ -505,17 +518,62 @@ export function CanvasStrip({
     onHoverIndex?.(null);
   };
 
-  const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (!supportsFineHover(event.pointerType)) {
-      if (lastHoverIndexRef.current !== null) handlePointerLeave();
-      return;
-    }
-    if (!getHoverIndex || width <= 0) return;
-    const next = getHoverIndex(event.nativeEvent.offsetX, width);
+  const selectIndex = (next: number | null) => {
     if (next === lastHoverIndexRef.current) return;
     lastHoverIndexRef.current = next;
     animateHover(next, next == null ? 0 : 1);
     onHoverIndex?.(next);
+  };
+
+  /** 触屏点哪根柱子。canvas 铺满容器，按 X 比例换算即可（和 hover 同一套 `getHoverIndex`）。 */
+  const resolveTouchIndex = (event: PointerEvent<HTMLCanvasElement>): number | null => {
+    if (!getHoverIndex || width <= 0) return null;
+    const rect = event.currentTarget.getBoundingClientRect();
+    // 不用 offsetX：触屏事件的 target 可能是 canvas 本身以外的东西（捕获之后尤其如此）。
+    return getHoverIndex(event.clientX - rect.left, width);
+  };
+
+  const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
+    // 精细指针走 hover 那一套，按下不额外做事。
+    if (supportsFineHover(event.pointerType)) return;
+    clearTouchHoldTimer();
+    touchPointerRef.current = event.pointerId;
+    touchPickedRef.current = true;
+    selectIndex(resolveTouchIndex(event));
+    // 捕获指针，手指横着划过去时气泡跟着走；页面纵向滚动仍会让浏览器发 pointercancel。
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // 某些浏览器在指针已经结束时会抛错，捕获不到就退化成「只认按下那一下」。
+    }
+  };
+
+  const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (!supportsFineHover(event.pointerType)) {
+      // 手指按着就跟随，没按着（触屏的「悬停」根本不存在）就不动它 ——
+      // 早先这里是无条件清空，于是点一下立刻被后续事件抹掉，触屏永远看不到数值。
+      if (touchPointerRef.current === event.pointerId) selectIndex(resolveTouchIndex(event));
+      return;
+    }
+    if (!getHoverIndex || width <= 0) return;
+    selectIndex(getHoverIndex(event.nativeEvent.offsetX, width));
+  };
+
+  const endTouch = (event: PointerEvent<HTMLCanvasElement>, keep: boolean) => {
+    if (touchPointerRef.current !== event.pointerId) return;
+    touchPointerRef.current = null;
+    if (!keep) {
+      // 被滚动抢走的指针不会派发 click，这里也就不用挡了。
+      touchPickedRef.current = false;
+      handlePointerLeave();
+      return;
+    }
+    // 抬手之后再留一会儿：手指挪开才看得见气泡。
+    clearTouchHoldTimer();
+    touchHoldTimerRef.current = setTimeout(() => {
+      touchHoldTimerRef.current = null;
+      handlePointerLeave();
+    }, TOUCH_BUCKET_HOLD_MS);
   };
 
   return (
@@ -524,8 +582,23 @@ export function CanvasStrip({
       className={className}
       style={{ width: "100%", height }}
       aria-hidden
+      onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerLeave={handlePointerLeave}
+      onPointerUp={(event) => endTouch(event, true)}
+      onClick={(event) => {
+        // 列表视图整行是 <Link>：不挡的话，点柱子看数值会顺手把详情页打开。
+        if (!touchPickedRef.current) return;
+        touchPickedRef.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      // 滚动页面时浏览器会抢走指针：这一下不是「想看数值」，气泡直接收掉。
+      onPointerCancel={(event) => endTouch(event, false)}
+      onPointerLeave={() => {
+        // 触屏那份「按下选中」有自己的收尾（抬手计时 / pointercancel），别被这里抢先清掉。
+        if (touchPointerRef.current != null || touchHoldTimerRef.current != null) return;
+        handlePointerLeave();
+      }}
     />
   );
 }

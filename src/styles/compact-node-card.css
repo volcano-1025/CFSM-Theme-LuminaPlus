@@ -584,9 +584,17 @@
     transform 150ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* 选中态不能锁在 hover 媒体查询里：触屏点一下也要看得出点中了哪根 —— 那边根本没有
+   :hover，只有这个 data-selected。 */
+.compact-node-health-bar[data-selected="true"] {
+  filter: saturate(1.14) brightness(1.04);
+  opacity: 1 !important;
+  outline: none;
+  transform: scaleY(1.55);
+}
+
 @media (any-hover: hover) and (any-pointer: fine) {
-  .compact-node-health-bar:hover,
-  .compact-node-health-bar[data-selected="true"] {
+  .compact-node-health-bar:hover {
     filter: saturate(1.14) brightness(1.04);
     opacity: 1 !important;
     outline: none;
@@ -598,10 +606,16 @@
   }
 }
 
+/* 触屏上把整条的可点区域纵向撑开：柱条本身只有 9~16px 高，手指压不准。
+   `content-box` + 等量负外边距 = 命中区变大但占位不变，柱子画在哪儿一点不动。
+   只加纵向，横向一动命中换算（按容器宽度均分）就偏了。 */
 @media (any-hover: none) {
-  .compact-node-health-tooltip,
-  .node-health-hover-tooltip {
-    display: none;
+  .health-bar-row,
+  .compact-node-health-bars,
+  .mini-health-bars {
+    box-sizing: content-box;
+    padding-block: 4px;
+    margin-block: -4px;
   }
 }
 
