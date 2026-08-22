@@ -89,6 +89,8 @@ const POLL_REFRESH_INTERVAL_MS = 5_000;
 const FULL_REFRESH_INTERVAL_MS = 60_000;
 /** 离线是"超过阈值没有上报"，没有事件驱动，只能定时重算。 */
 const ONLINE_RECHECK_INTERVAL_MS = 15_000;
+/** 快照的瞬时速率超过这个年龄就不再当"现在"用，详见 {@link shouldTrustSnapshotRate}。 */
+const SNAPSHOT_RATE_MAX_AGE_MS = 10_000;
 const SERVERS_REQUEST_TIMEOUT_MS = 8_000;
 
 /* ------------------------------------------------------------------ *
@@ -113,6 +115,16 @@ const WS_ARRIVAL_GAP_DEFAULT_MS = 1_000;
 /** 每台节点最多排队多少帧；超了丢最老的，避免显示越拖越旧。 */
 const WS_MAX_QUEUE_PER_SERVER = 8;
 const WS_ARRIVAL_GAP_MAX_MS = 15_000;
+/**
+ * 队列里积压的帧「按当前节奏还要放多久」超过这个时长，就直接跳到最新一帧。
+ *
+ * 匀速回放的前提是放帧速度跟得上到达速度。标签页被后台节流、或后端一次补发一段历史时
+ * 跟不上，队列会一路涨到 {@link WS_MAX_QUEUE_PER_SERVER}，此时逐帧匀速放意味着「实时带宽」
+ * 显示的是十几秒前的旧值，还会把那段时间里的旧尖峰当成当前值再播一遍。
+ * 内置主题的做法是按墙钟游标直接跳到最新那条（`applyPlaybackSamplesForServer`），这里对齐它：
+ * 正常节奏（积压 1~2 帧）仍然匀速回放，真落后了就跳帧保新鲜。
+ */
+const WS_MAX_PLAYBACK_LAG_MS = 4_000;
 
 const SCROLL_IDLE_DELAY_MS = 160;
 const TRAFFIC_TREND_SAMPLE_COUNT = 18;
@@ -182,6 +194,30 @@ function alignEmptyMetricsTotals(metrics: NodeMetrics, info: NodeInfo): NodeMetr
 // 累计流量直接跟随后端计数器下降；0 视为本帧缺样，避免局部帧闪零。
 export function resolveTrafficTotal(previous: number, raw: number): number {
   return Number.isFinite(raw) && raw > 0 ? raw : previous;
+}
+
+/**
+ * 快照里的**瞬时速率**能不能用。
+ *
+ * `/api/servers` 有 30 秒服务端缓存，`net_in_speed` / `net_out_speed` 是被冻住的某**一个**
+ * 2 秒均值样本 —— 2026-08-22 在线上取证：8 台节点的 `last_updated` 落后 29~78 秒，而它们的
+ * 速率字段无一例外高于其后 28 秒的 WS 均值（1.35~10 倍，合计 1.0 MB/s 对 0.28 MB/s）。
+ * 首屏照搬这份值，顶部「实时带宽」一打开就是几倍虚高，等第一帧 WS 到了再掉回来 ——
+ * 站长反馈的「刚打开/刷新完页面流量数字暴涨」就是它。
+ *
+ * 于是只在两种情况下认这份速率：
+ * ① 快照足够新（`last_updated` 在 {@link SNAPSHOT_RATE_MAX_AGE_MS} 内），值还描述得了「现在」；
+ * ② WS 已经确定不可用 —— 轮询兜底时它是唯一的数据源，再旧也得用。
+ * 其余情况沿用现值（首屏就是 0），等第一帧 WS 补上，实测在 WS 连上后 1 秒内到齐。
+ *
+ * 累计流量、在线状态不受影响：那些字段不随时间衰减，快照旧一点照样准。
+ */
+export function shouldTrustSnapshotRate(
+  snapshotAgeMs: number,
+  realtimeUnavailable: boolean,
+): boolean {
+  if (realtimeUnavailable) return true;
+  return Number.isFinite(snapshotAgeMs) && snapshotAgeMs <= SNAPSHOT_RATE_MAX_AGE_MS;
 }
 
 /** 增量样本可能不带累计量，缺样时沿用上一帧，避免卡片闪 0。 */
@@ -565,6 +601,16 @@ function sortServers(servers: CfsmServer[]) {
   return [...servers].sort((left, right) => left.sort_order - right.sort_order);
 }
 
+/**
+ * WS 是否**已经确定**不可用：建过连接但一条都没连上。
+ *
+ * 首屏（还没建连，`connectionsByBase` 是空的）返回 false —— 那时该等 WS，不是拿快照的
+ * 陈旧速率顶上；只有真的连不上、靠 5 秒轮询兜底时，快照才是唯一的数据源。
+ */
+function realtimeKnownUnavailable(): boolean {
+  return connectionsByBase.size > 0 && connectedBases.size === 0;
+}
+
 function syncServers() {
   syncPromise ??= performServersSync().finally(() => {
     syncPromise = null;
@@ -633,7 +679,15 @@ async function performServersSync() {
               trafficUpMonthly: restMetrics.trafficUpMonthly,
               trafficDownMonthly: restMetrics.trafficDownMonthly,
             }
-          : restMetrics;
+          : // 采用快照时另外挡一道瞬时速率：`updatedAt` 的比较只能防住"拿旧值盖新值"，
+            // 首屏没有现值可比，虚高的速率会长驱直入。
+            shouldTrustSnapshotRate(now - restMetrics.updatedAt, realtimeKnownUnavailable())
+            ? restMetrics
+            : {
+                ...restMetrics,
+                netUp: previousMetrics?.netUp ?? 0,
+                netDown: previousMetrics?.netDown ?? 0,
+              };
       const alignedMetrics = alignEmptyMetricsTotals(nextMetrics, info);
       if (!previousMetrics || !shallowEqualMetrics(previousMetrics, alignedMetrics)) {
         metricsByUuid[uuid] = alignedMetrics;
@@ -804,6 +858,16 @@ function scheduleWsTick(): void {
   wsTickTimer = window.setTimeout(runWsTick, WS_TICK_MS);
 }
 
+/**
+ * 出帧前要丢掉多少帧陈旧的：积压按当前节奏放完要超过 {@link WS_MAX_PLAYBACK_LAG_MS} 就只留最新一帧。
+ *
+ * 用「还要放多久」而不是「积压几帧」判定，慢节点（出帧间隔本来就大）才不会被误判成落后。
+ */
+export function resolvePlaybackDropCount(queueLength: number, intervalMs: number): number {
+  if (queueLength <= 1 || intervalMs <= 0) return 0;
+  return queueLength * intervalMs > WS_MAX_PLAYBACK_LAG_MS ? queueLength - 1 : 0;
+}
+
 /** 一拍：把所有「到点」的节点各放一帧，合成一次提交。 */
 function runWsTick(): void {
   wsTickTimer = null;
@@ -813,11 +877,13 @@ function runWsTick(): void {
 
   for (const [serverId, pending] of wsPendingByServer) {
     if (pending.queue.length > 0 && now >= pending.nextDueAt) {
+      const intervalMs = resolveWsNodeIntervalMs(pending.arrivals);
+      const drop = resolvePlaybackDropCount(pending.queue.length, intervalMs);
+      if (drop > 0) pending.queue.splice(0, drop);
       batch.push(pending.queue.shift()!);
       // 对齐到固定网格：从上一次应放的时刻推进一个间隔，而不是从"现在"重算，
       // 这样连续出帧的间隔恒等于该节点的平均出帧间隔。落后太多（如标签页被节流）时从现在追平。
-      pending.nextDueAt =
-        Math.max(now, pending.nextDueAt) + resolveWsNodeIntervalMs(pending.arrivals);
+      pending.nextDueAt = Math.max(now, pending.nextDueAt) + intervalMs;
     }
     const lastArrivalAt = pending.arrivals[pending.arrivals.length - 1] ?? 0;
     if (pending.queue.length === 0 && now - lastArrivalAt > WS_ARRIVAL_GAP_MAX_MS) {

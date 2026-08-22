@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { resolveTrafficTotal, resolveWsNodeIntervalMs } from "@/services/wsStore";
+import {
+  resolvePlaybackDropCount,
+  resolveTrafficTotal,
+  resolveWsNodeIntervalMs,
+  shouldTrustSnapshotRate,
+} from "@/services/wsStore";
 
 // 像 resolveTrafficTotals 每个 tick 那样,把一串原始累计读数喂给 resolver:把上一个显示值
 //(store 存在 node metrics 上)往后传。
@@ -84,5 +89,57 @@ describe("resolveWsNodeIntervalMs", () => {
   it("clamps so playback never storms or stalls", () => {
     expect(resolveWsNodeIntervalMs([0, 50])).toBe(200);
     expect(resolveWsNodeIntervalMs([0, 60_000])).toBe(3_000);
+  });
+});
+
+describe("resolvePlaybackDropCount", () => {
+  it("keeps paced playback while the backlog is one or two frames", () => {
+    // 正常节奏：2 秒一帧、队列 1~2 帧，仍然逐帧匀速放（这是"看起来匀速"的前提）。
+    expect(resolvePlaybackDropCount(1, 2_000)).toBe(0);
+    expect(resolvePlaybackDropCount(2, 2_000)).toBe(0);
+  });
+
+  it("skips to the newest frame once the backlog would take too long to drain", () => {
+    // 3 帧 × 2 秒 = 6 秒 > 4 秒：再逐帧放，显示的就是 6 秒前的旧值。
+    expect(resolvePlaybackDropCount(3, 2_000)).toBe(2);
+    // 队列满（标签页被后台节流过）时只留最新一帧。
+    expect(resolvePlaybackDropCount(8, 2_000)).toBe(7);
+  });
+
+  it("measures the backlog in time, not frames, so slow nodes are not misjudged", () => {
+    // 快节点：0.5 秒一帧，积压 8 帧也只有 4 秒，还追得上，不丢。
+    expect(resolvePlaybackDropCount(8, 500)).toBe(0);
+    // 慢节点：3 秒一帧，积压 2 帧就已经是 6 秒了，得跳。
+    expect(resolvePlaybackDropCount(2, 3_000)).toBe(1);
+  });
+
+  it("never drops the only frame it has", () => {
+    expect(resolvePlaybackDropCount(1, 3_000)).toBe(0);
+    expect(resolvePlaybackDropCount(0, 3_000)).toBe(0);
+  });
+});
+
+describe("shouldTrustSnapshotRate", () => {
+  it("rejects the stale snapshot rate that inflates the first paint", () => {
+    // 线上实测 /api/servers 的 last_updated 落后 29~78 秒，速率字段比之后 28 秒的 WS
+    // 均值高 1.35~10 倍 —— 首屏照搬就是「刚打开页面带宽暴涨」。
+    expect(shouldTrustSnapshotRate(29_000, false)).toBe(false);
+    expect(shouldTrustSnapshotRate(78_000, false)).toBe(false);
+  });
+
+  it("accepts a snapshot fresh enough to still describe now", () => {
+    expect(shouldTrustSnapshotRate(0, false)).toBe(true);
+    expect(shouldTrustSnapshotRate(10_000, false)).toBe(true);
+    expect(shouldTrustSnapshotRate(10_001, false)).toBe(false);
+  });
+
+  it("falls back to the snapshot rate when WebSocket is known to be unavailable", () => {
+    // 轮询兜底时快照是唯一数据源，再旧也得用，否则速率永远是 0。
+    expect(shouldTrustSnapshotRate(78_000, true)).toBe(true);
+  });
+
+  it("treats a missing timestamp as unusable rather than fresh", () => {
+    // last_updated 缺失时 now - 0 是个巨大的年龄，不能当成"刚刚"。
+    expect(shouldTrustSnapshotRate(Number.NaN, false)).toBe(false);
   });
 });
