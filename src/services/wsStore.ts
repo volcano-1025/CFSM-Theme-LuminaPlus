@@ -54,6 +54,8 @@ export interface HomeNodeSummary {
   trafficDown: number;
   netUp: number;
   netDown: number;
+  /** 这台节点的瞬时速率是否已经有值（见 {@link liveRateNodes}）。 */
+  rateKnown: boolean;
 }
 
 export interface NodeOnlineSummary {
@@ -401,6 +403,16 @@ function updateTrafficTrendSeries(
 }
 
 let state: State = emptyState();
+/**
+ * 已经拿到过瞬时速率的节点。
+ *
+ * {@link shouldTrustSnapshotRate} 会把首屏那份陈旧快照的速率挡掉，于是各节点的
+ * `netUp`/`netDown` 在自己的第一帧 WS 到达前都是 0，而各节点的第一帧是**先后**到的
+ * （实测 8 台铺开在 1~2 秒里）。顶部「实时带宽」是跨节点求和，这段时间里的每一个和
+ * 都只加了一部分节点 —— 站长看到的「先显示 0，再飞快跳几个数才正常」就是这串半截和。
+ * 记下哪些节点已经有值，让首页在凑齐之前显示「—」而不是把半截和当数报出去。
+ */
+const liveRateNodes = new Set<string>();
 const visibleNodeListeners = new Set<Listener>();
 const allNodesListeners = new Set<Listener>();
 const homeNodeSummaryListeners = new Set<Listener>();
@@ -541,6 +553,8 @@ function applyRawUpdates(
     if (!raw || !previous) continue;
 
     const merged = carryForwardTotals(toNodeMetrics(raw, now, previous), previous);
+    // 实时帧一定带着当下的速率，这台节点从此有值。
+    liveRateNodes.add(uuid);
     // 首页延迟条按上报滚动累积，不再查历史接口。
     recordPingSample(uuid, merged.updatedAt, merged.ping);
 
@@ -671,6 +685,13 @@ async function performServersSync() {
       // 每 30 秒一次的全量刷新若照单全收，就会拿这份旧值盖掉新鲜的 WS 实时值，
       // 「实时带宽」于是每半分钟被重新抬高一次再慢慢掉回去。快照不比现值新时，
       // 只取 WS 不下发的字段（月度累计等），实时部分保持现值。
+      // 采用快照时另外挡一道瞬时速率：`updatedAt` 的比较只能防住"拿旧值盖新值"，
+      // 首屏没有现值可比，虚高的速率会长驱直入。
+      const trustSnapshotRate = shouldTrustSnapshotRate(
+        now - restMetrics.updatedAt,
+        realtimeKnownUnavailable(),
+      );
+      if (trustSnapshotRate) liveRateNodes.add(uuid);
       const nextMetrics =
         previousMetrics && previousMetrics.updatedAt > restMetrics.updatedAt
           ? {
@@ -679,9 +700,7 @@ async function performServersSync() {
               trafficUpMonthly: restMetrics.trafficUpMonthly,
               trafficDownMonthly: restMetrics.trafficDownMonthly,
             }
-          : // 采用快照时另外挡一道瞬时速率：`updatedAt` 的比较只能防住"拿旧值盖新值"，
-            // 首屏没有现值可比，虚高的速率会长驱直入。
-            shouldTrustSnapshotRate(now - restMetrics.updatedAt, realtimeKnownUnavailable())
+          : trustSnapshotRate
             ? restMetrics
             : {
                 ...restMetrics,
@@ -730,6 +749,7 @@ async function performServersSync() {
       if (!nextUuids.has(uuid)) {
         touchedMeta.add(uuid);
         touchedMetrics.add(uuid);
+        liveRateNodes.delete(uuid);
       }
     }
 
@@ -1197,6 +1217,7 @@ function stopStore() {
   syncController = null;
   closeAllConnections();
   resetWsCoalesceState();
+  liveRateNodes.clear();
   for (const timer of [pollTimer, fullRefreshTimer, onlineTimer]) {
     if (timer != null) window.clearInterval(timer);
   }
@@ -1409,6 +1430,8 @@ export function getHomeNodeSummariesSnapshot(): HomeNodeSummary[] {
         trafficDown: metrics?.trafficDown ?? 0,
         netUp: realtimeNetUp,
         netDown: realtimeNetDown,
+        // 掉线节点按 0 计，那是个确定的值，不该让它把总览一直卡在「—」。
+        rateKnown: online === false || liveRateNodes.has(uuid),
       };
     })
     .filter((item): item is HomeNodeSummary => Boolean(item));
@@ -1428,7 +1451,8 @@ export function getHomeNodeSummariesSnapshot(): HomeNodeSummary[] {
         prev.trafficUp === item.trafficUp &&
         prev.trafficDown === item.trafficDown &&
         prev.netUp === item.netUp &&
-        prev.netDown === item.netDown
+        prev.netDown === item.netDown &&
+        prev.rateKnown === item.rateKnown
       );
     })
   ) {

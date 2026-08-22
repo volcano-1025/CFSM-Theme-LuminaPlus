@@ -79,7 +79,19 @@ interface HomeOverview {
   trafficDown: number;
   netUp: number;
   netDown: number;
+  /** 各节点的瞬时速率是否都已到位；没到位时不显示这个求和，见 {@link BANDWIDTH_READY_DEADLINE_MS}。 */
+  netReady: boolean;
 }
+
+/**
+ * 「实时带宽」最多等多久就把手上的和显示出来。
+ *
+ * 各节点第一帧 WS 的到达时刻不同（实测 8 台铺开在 1~2 秒里），凑齐之前这个跨节点求和
+ * 只加了一部分节点，是个无意义的半截和 —— 直接显示会变成「先 0，再飞快跳几个数」。
+ * 所以凑齐前显示「—」。但不能无限等：有节点长期不出帧（上报间隔很长、或掉线判定还没落地）
+ * 时得有个下限，超时就按手上的数照显示。
+ */
+const BANDWIDTH_READY_DEADLINE_MS = 4_000;
 
 function formatCompactBytes(value: number): string {
   const [amount, unit = "B"] = formatBytes(value).split(" ");
@@ -132,6 +144,8 @@ function HomeOverviewCards({
     overview.trafficUp + overview.trafficDown,
   ).split(" ");
   const rate = formatByteRate(overview.netUp + overview.netDown);
+  // 求和没凑齐之前给「—」：半截和不是一个偏小的估计，而是个没有意义的数。
+  const bandwidthPending = !overview.netReady;
   const onlinePct =
     overview.totalNodes > 0 ? (overview.onlineNodes / overview.totalNodes) * 100 : 0;
   const offlinePct =
@@ -143,8 +157,12 @@ function HomeOverviewCards({
       : "—";
   const trafficDetailLabel = `↑ ${formatBytes(overview.trafficUp)} · ↓ ${formatBytes(overview.trafficDown)}`;
   const trafficCompactLabel = `↑${formatCompactBytes(overview.trafficUp)} ↓${formatCompactBytes(overview.trafficDown)}`;
-  const bandwidthDetailLabel = `↑ ${formatByteRateLabel(overview.netUp)} · ↓ ${formatByteRateLabel(overview.netDown)}`;
-  const bandwidthCompactLabel = `↑${formatCompactBytes(overview.netUp)} ↓${formatCompactBytes(overview.netDown)}`;
+  const bandwidthDetailLabel = bandwidthPending
+    ? "等待各节点上报"
+    : `↑ ${formatByteRateLabel(overview.netUp)} · ↓ ${formatByteRateLabel(overview.netDown)}`;
+  const bandwidthCompactLabel = bandwidthPending
+    ? "等待上报"
+    : `↑${formatCompactBytes(overview.netUp)} ↓${formatCompactBytes(overview.netDown)}`;
   const trafficRating =
     showOverviewRatings && showTrafficRating
       ? getOverviewRating({
@@ -154,7 +172,7 @@ function HomeOverviewCards({
         })
       : null;
   const bandwidthRating =
-    showOverviewRatings && showBandwidthRating
+    showOverviewRatings && showBandwidthRating && !bandwidthPending
       ? getOverviewRating({
           kind: "bandwidth",
           value: overview.netUp + overview.netDown,
@@ -214,10 +232,12 @@ function HomeOverviewCards({
         <div className="overview-card-main">
           <p
             className="overview-card-value"
-            style={{ color: speedRateColor(rate.unit) }}
+            style={bandwidthPending ? undefined : { color: speedRateColor(rate.unit) }}
           >
-            {rate.value}
-            <span className="overview-card-unit">{rate.unit}</span>
+            {bandwidthPending ? "—" : rate.value}
+            {bandwidthPending ? null : (
+              <span className="overview-card-unit">{rate.unit}</span>
+            )}
           </p>
         </div>
         <div className="overview-card-footer">
@@ -398,6 +418,7 @@ export function NodeGrid() {
     let trafficDown = 0;
     let netUp = 0;
     let netDown = 0;
+    let netReady = true;
     for (const node of visibleNodes) {
       if (node.online === true) onlineNodes += 1;
       else if (node.online === false) offlineNodes += 1;
@@ -405,6 +426,7 @@ export function NodeGrid() {
       trafficDown += node.trafficDown;
       netUp += node.netUp;
       netDown += node.netDown;
+      if (!node.rateKnown) netReady = false;
     }
 
     return {
@@ -415,14 +437,29 @@ export function NodeGrid() {
       trafficDown,
       netUp,
       netDown,
+      netReady,
     };
   }, [visibleNodes]);
   // 顶部「实时带宽」是跨节点求和，各节点相位不同会让它一秒内变好几次。
   // 单独按 1 秒节拍统一换一次；卡片仍按各自节奏刷新。
   const pacedNet = usePacedRate(overview.netUp, overview.netDown);
+  // 兜底：等再久也要出数，免得某台节点一直不出帧就把整张卡钉在「—」。
+  const [netDeadlinePassed, setNetDeadlinePassed] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setNetDeadlinePassed(true),
+      BANDWIDTH_READY_DEADLINE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, []);
   const displayOverview = useMemo<HomeOverview>(
-    () => ({ ...overview, netUp: pacedNet.up, netDown: pacedNet.down }),
-    [overview, pacedNet],
+    () => ({
+      ...overview,
+      netUp: pacedNet.up,
+      netDown: pacedNet.down,
+      netReady: overview.netReady || netDeadlinePassed,
+    }),
+    [overview, pacedNet, netDeadlinePassed],
   );
   const showHomeOverview = themeSettings.isReady && themeSettings.showHomeOverview;
   const hasNodes = visibleMeta.length > 0;
