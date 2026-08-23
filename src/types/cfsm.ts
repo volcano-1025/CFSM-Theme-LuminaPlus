@@ -177,6 +177,15 @@ export const SysConfigSchema = z
     show_expire: z.boolean().default(true),
     show_tf: z.boolean().default(true),
     show_time: z.boolean().default(true),
+    /**
+     * 后端是否输出首页的**详细** ping/loss（`servers[].ping[]` / `loss[]` 那一小时窗口）。
+     *
+     * 后端 2026-08-23 加的开关。关掉时那两个数组不再下发，只剩每台节点当前的
+     * `ping_ct/cu/cm/bd` 单条值 —— 主题要据此回退，不然三网那三条线没有数据可画、
+     * 开页自检也会把「本来就不下发」误判成「后端数据坏了」而反复弹窗。
+     * 默认 true：老版本后端没有这个字段，而它们是一直输出详细数据的。
+     */
+    show_three_net_details: z.boolean().default(true),
     long_history_points: looseNumber.optional(),
     display_mode: looseString.optional(),
   })

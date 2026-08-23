@@ -160,6 +160,7 @@ const DEFAULT_SYS_CONFIG: SysConfig = {
   show_expire: true,
   show_tf: true,
   show_time: true,
+  show_three_net_details: true,
 };
 
 function emptyState(): State {
@@ -1043,6 +1044,7 @@ function updateSysConfigSnapshot(next: SysConfig): boolean {
     sysConfigSnapshot.show_expire === resolved.show_expire &&
     sysConfigSnapshot.show_tf === resolved.show_tf &&
     sysConfigSnapshot.show_time === resolved.show_time &&
+    sysConfigSnapshot.show_three_net_details === resolved.show_three_net_details &&
     sysConfigSnapshot.long_history_points === resolved.long_history_points
   ) {
     return false;

@@ -17,6 +17,8 @@ import {
   subscribeToNodeMetrics,
   subscribeToNodeTrafficTrend,
   getStoreStatusSnapshot,
+  getSysConfigSnapshot,
+  subscribeSysConfig,
   type HomeNodeSummary,
   type NodeOnlineSummary,
 } from "@/services/wsStore";
@@ -127,6 +129,19 @@ const EMPTY_STORE_STATUS = {
   hydrated: false,
   nodeInfoError: false,
 } as const;
+
+/**
+ * 后端 `/api/servers` 下发的 `sysConfig` 里那个开关：**是否输出首页的详细 ping/loss**。
+ *
+ * 关掉时后端不再下发 `servers[].ping[]` / `loss[]` 这一小时窗口，只剩每台节点当前的
+ * 单条 `ping_ct/cu/cm/bd`。主题据此回退：三网那三条线不画（没数据可画），
+ * 开页自检也不跑（本来就不下发，不是数据坏了）。老后端没有这个字段，默认按 true 走。
+ */
+export function useShowThreeNetDetails(): boolean {
+  useEnsured();
+  const getSnapshot = useCallback(() => getSysConfigSnapshot().show_three_net_details, []);
+  return useSyncExternalStore(subscribeSysConfig, getSnapshot, getSnapshot);
+}
 
 export function useNodeStoreStatus(enabled = true) {
   useEnsured(enabled);

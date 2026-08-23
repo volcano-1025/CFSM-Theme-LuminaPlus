@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useFakePingFallback } from "@/hooks/useFakePing";
 import { useHourlyClock, useMinuteClock } from "@/hooks/useClock";
-import { useNodeCardSnapshots } from "@/hooks/useNode";
+import { useNodeCardSnapshots, useShowThreeNetDetails } from "@/hooks/useNode";
 import {
   buildPingBuckets,
   useNodePingOverview,
@@ -62,8 +62,12 @@ export function useNodeCardModel(
     enableHomepageMultiPing,
     homepageMultiPingTaskIds,
   } = useThemeSettings();
+  // 后端关掉「输出首页详细 ping/loss」时那三条线一条数据都没有，直接回退单线路，
+  // 免得画出三条空线（口径见 useShowThreeNetDetails）。
+  const showThreeNetDetails = useShowThreeNetDetails();
   const multiPingActive =
     includeMultiPing &&
+    showThreeNetDetails &&
     enableHomepageMultiPing &&
     homepageMultiPingTaskIds.length === HOMEPAGE_MULTI_PING_TASK_COUNT;
   const windowPing = useNodePingOverview(uuid, !multiPingActive);

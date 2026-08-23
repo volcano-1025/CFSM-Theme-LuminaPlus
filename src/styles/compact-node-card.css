@@ -525,7 +525,10 @@
 .compact-node-health-bars {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(18, minmax(0, 1fr));
+  /* 列数由柱子数量自己撑开，别写死格数：写死过 18，格数改成 20 之后多出来的两根
+     直接换行到第二排（2026-08-23 栽过一次）。tooltip 是 absolute 的，不占轨道。 */
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   align-items: end;
   gap: 1.5px;
   min-width: 0;

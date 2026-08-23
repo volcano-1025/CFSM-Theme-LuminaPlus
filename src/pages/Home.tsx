@@ -4,7 +4,7 @@ import { NodeGrid } from "@/components/node/NodeGrid";
 import { FloatingControls } from "@/components/shell/FloatingControls";
 import { PingHealthDialog } from "@/components/shell/PingHealthDialog";
 import { Spinner } from "@/components/ui/Spinner";
-import { useNodeStoreStatus } from "@/hooks/useNode";
+import { useNodeStoreStatus, useShowThreeNetDetails } from "@/hooks/useNode";
 import { usePingDataHealthPrompt } from "@/hooks/usePingDataHealth";
 import { usePingHistoryRefresh } from "@/hooks/usePingHistoryRefresh";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
@@ -22,8 +22,11 @@ function HomeDashboard() {
   // 会让「请求在途」的互斥失效，连点就把请求打两遍。
   const pingRefresh = usePingHistoryRefresh();
   // 站长可以在主题设置里关掉这个提醒（`enablePingHealthPrompt`）；关了就连自检都不跑。
+  // 后端那个「输出首页详细 ping/loss」的开关关掉时也不跑：窗口本来就不下发，柱子空是
+  // 预期而不是数据坏了，再弹窗就是每次开页都误报一遍。
+  const showThreeNetDetails = useShowThreeNetDetails();
   const pingHealth = usePingDataHealthPrompt(
-    homeReady && themeSettings.enablePingHealthPrompt,
+    homeReady && themeSettings.enablePingHealthPrompt && showThreeNetDetails,
   );
 
   return (
