@@ -30,9 +30,12 @@ import type { NodeViewMode } from "@/utils/themeSettings";
  * 实例详情页的 Ping 图表仍然读历史，那是用户主动打开、单节点一次的请求。
  */
 
-// 首页延迟图表默认显示 30 个 bucket：与后端一小时探测窗口的 30 个槽位一一对应，
-// 一格正好一个后端采样点，不再因为 24/30 除不尽而把相邻槽位混进同一格。
-const MAX_VISIBLE_HOMEPAGE_PING_BUCKETS = 30;
+// 首页延迟图表显示 20 个 bucket：与后端一小时窗口的 20 个槽位一一对应，一格正好一个
+// 后端采样点（3 分钟），不因为除不尽而把相邻槽位混进同一格。
+// 后端 2026-08-23 改成从 D1 取一小时数据、由 30 条改为返回 20 条，这里跟着走；
+// **四种视图（大卡/小卡/迷你卡/列表）统一用这个数**，别再各挑各的格数 —— 格数一旦
+// 和后端槽位对不上，同一台节点在不同视图里的柱子就会错位。
+export const HOMEPAGE_PING_BUCKET_COUNT = 20;
 /** 样本间隔推不出来时的兜底，用于把样本投影到 bucket。 */
 const DEFAULT_SAMPLE_INTERVAL_MS = 60_000;
 /** 后端窗口是 2 分钟一个槽位，本地实测最密时探测间隔（约 60 秒）一个；限制在这个区间内。 */
@@ -325,11 +328,11 @@ export function buildPingBuckets(
 ): PingOverviewBucket[] {
   const offlineAt = resolveOfflineSince(offlineSince);
   const totalWindowMs = 60 * 60 * 1000;
-  const requestedCount = count ?? MAX_VISIBLE_HOMEPAGE_PING_BUCKETS;
+  const requestedCount = count ?? HOMEPAGE_PING_BUCKET_COUNT;
   const boundedRequestedCount =
     Number.isFinite(requestedCount) && requestedCount > 0
       ? Math.min(240, Math.max(1, Math.round(requestedCount)))
-      : MAX_VISIBLE_HOMEPAGE_PING_BUCKETS;
+      : HOMEPAGE_PING_BUCKET_COUNT;
   const metricIntervalMs =
     typeof ping.metricIntervalMs === "number" &&
     Number.isFinite(ping.metricIntervalMs) &&

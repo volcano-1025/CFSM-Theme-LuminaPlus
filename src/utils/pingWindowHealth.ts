@@ -3,7 +3,7 @@ import type { PingOverviewBucket } from "@/types/cfsm";
 /**
  * 首页延迟数据的自检：判断 `/api/servers` 给的 `ping[]` / `loss[]` 这一份到底能不能看。
  *
- * 后端窗口是低保真的填充产物（`buildFixedLatencySeries` 用无上限最近邻把 30 格补满，
+ * 后端窗口是低保真的填充产物（`buildFixedLatencySeries` 用无上限最近邻把整个窗口补满，
  * 详见 CLAUDE.md），主题这边 `dropBackfilledRuns` 会把连续复印的那几段整段丢掉 ——
  * 于是**用户看到的「某个时段是同一个值」，落到这一版上就是柱子大片空缺**。所以判据只有一条：
  *
@@ -20,9 +20,9 @@ import type { PingOverviewBucket } from "@/types/cfsm";
  * D1 读行的，所以宁可漏判也别乱打断（见 {@link shouldPromptPingRefresh}）。
  */
 
-/** 自检按默认的 30 格窗口来算，和大卡一致；各视图的格数不同，不跟着变以免阈值飘。 */
-export const HEALTH_BUCKET_COUNT = 30;
-/** 非掉线格里有这么大比例没值，就算「柱子明显空缺」。30 格里空 9 格。 */
+/** 自检的格数与卡片一致（四种视图现在统一 20 格，见 `HOMEPAGE_PING_BUCKET_COUNT`）。 */
+export const HEALTH_BUCKET_COUNT = 20;
+/** 非掉线格里有这么大比例没值，就算「柱子明显空缺」。20 格里空 6 格。 */
 export const GAP_RATIO_THRESHOLD = 0.3;
 /** 后端窗口里这么大比例的格子是复印段，就把「后端在编数据」记进理由里。 */
 export const BACKFILL_RATIO_THRESHOLD = 0.4;

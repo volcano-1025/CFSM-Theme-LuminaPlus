@@ -1,0 +1,36 @@
+/* 站点底部署名（Powered by / Theme by）。跨全部路由，跟着 AppShell 走。 */
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 12px 20px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.site-footer-item {
+  white-space: nowrap;
+}
+
+.site-footer-sep {
+  opacity: 0.55;
+}
+
+.site-footer-link {
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.site-footer-link:hover,
+.site-footer-link:focus-visible {
+  color: var(--text-primary);
+  border-bottom-color: currentColor;
+}

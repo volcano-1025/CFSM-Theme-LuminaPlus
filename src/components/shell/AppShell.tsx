@@ -2,6 +2,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Lock } from "lucide-react";
 import { BackgroundLayer } from "./BackgroundLayer";
 import { TurnstileGate } from "./TurnstileGate";
+import { SiteFooter } from "./SiteFooter";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAppearance } from "@/hooks/useAppearance";
 import { useAuth } from "@/hooks/useAuth";
@@ -61,6 +62,7 @@ export function AppShell() {
           )}
         </div>
       </main>
+      <SiteFooter />
     </div>
   );
 }

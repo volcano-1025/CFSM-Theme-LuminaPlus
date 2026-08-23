@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPingBuckets,
+  HOMEPAGE_PING_BUCKET_COUNT,
   buildPingOverviewItem,
   resolveHomepagePingRequestMode,
   withLiveLatency,
 } from "@/hooks/usePingOverview";
 import type { PingLiveSample } from "@/services/pingLiveStore";
 import { EMPTY_CARRIER_PING } from "@/types/cfsm";
+import { HEALTH_BUCKET_COUNT } from "@/utils/pingWindowHealth";
 
 const MINUTE_MS = 60_000;
 const NOW = Date.UTC(2026, 6, 17, 11, 2);
@@ -115,6 +117,36 @@ describe("buildPingOverviewItem", () => {
     expect(buildPingOverviewItem("node-a", 99, [sample(1, { ct: 30 })]).isAssigned).toBe(
       false,
     );
+  });
+});
+
+describe("HOMEPAGE_PING_BUCKET_COUNT", () => {
+  it("matches the 20 slots the backend returns for the hour window", () => {
+    // 后端 2026-08-23 起从 D1 取一小时，由 30 条改为 20 条。格数必须一一对应，
+    // 否则一格里会混进相邻槽位、或者反过来空出格子。
+    expect(HOMEPAGE_PING_BUCKET_COUNT).toBe(20);
+  });
+
+  it("keeps the health self-check on the same grid as the cards", () => {
+    // 自检判「柱子空缺」用的格数要和卡片一致，否则空缺比例的阈值会跟着飘。
+    expect(HEALTH_BUCKET_COUNT).toBe(HOMEPAGE_PING_BUCKET_COUNT);
+  });
+
+  it("is what every view gets by default, so all four card sizes line up", () => {
+    const samples = Array.from({ length: 60 }, (_, index) =>
+      sample(index, { ct: 40 + index, lossCt: 0 }),
+    );
+    const buckets = buildPingBuckets(
+      buildPingOverviewItem("node-a", 1, samples),
+      undefined,
+      NOW,
+    );
+
+    expect(buckets).toHaveLength(20);
+    // 一小时 20 格 = 一格 3 分钟，正好一个后端采样点。
+    expect(buckets[0]?.startAt).toBe(NOW - 60 * MINUTE_MS);
+    expect(buckets[0]?.endAt).toBe(NOW - 57 * MINUTE_MS);
+    expect(buckets[19]?.endAt).toBe(NOW);
   });
 });
 

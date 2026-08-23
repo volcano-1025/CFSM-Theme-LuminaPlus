@@ -19,6 +19,7 @@ import { clsx } from "clsx";
 import { Flag } from "@/components/ui/Flag";
 import { OsLogo } from "@/components/ui/OsLogo";
 import { useNodeCardModel } from "@/hooks/useNodeCardModel";
+import { HOMEPAGE_PING_BUCKET_COUNT } from "@/hooks/usePingOverview";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { formatBytes } from "@/utils/format";
 import { HOMEPAGE_MULTI_PING_TASK_COUNT } from "@/utils/pingTasks";
@@ -49,7 +50,7 @@ import type { ByteRateDisplay } from "@/utils/format";
 import type { TrafficDisplay } from "@/utils/traffic";
 
 const TRAFFIC_DOT_COUNT = 16;
-const HEALTH_BAR_COUNT = 18;
+
 type CompactNode = NodeInfo & NodeMetrics;
 type CompactTag = { label: string; color: string };
 type CompactExpire = { value: string; unit: string };
@@ -201,7 +202,7 @@ function HealthBars({
   buckets: PingOverviewBucket[];
   kind: "latency" | "loss";
 }) {
-  const bars = buckets.slice(-HEALTH_BAR_COUNT);
+  const bars = buckets.slice(-HOMEPAGE_PING_BUCKET_COUNT);
   const containerRef = useRef<HTMLDivElement>(null);
   const touchHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -697,7 +698,7 @@ export const CompactNodeCard = memo(function CompactNodeCard({
   uuid: string;
 }) {
   const model = useNodeCardModel(uuid, {
-    pingBucketCount: HEALTH_BAR_COUNT,
+    pingBucketCount: HOMEPAGE_PING_BUCKET_COUNT,
     includeMultiPing: true,
   });
   const themeSettings = useThemeSettings();

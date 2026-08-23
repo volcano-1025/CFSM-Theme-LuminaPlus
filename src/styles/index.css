@@ -10,6 +10,7 @@
 @import "./node-list.css";
 @import "./os-logo.css";
 @import "./numeric.css";
+@import "./site-footer.css";
 
 @theme {
   --font-sans:

@@ -15,10 +15,10 @@ import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { formatOsLabel, joinTagTitle, nodeDetailLinkLabels } from "./nodeCardShared";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 import type { PingOverviewTaskLoadState } from "@/types/cfsm";
+import { HOMEPAGE_PING_BUCKET_COUNT } from "@/hooks/usePingOverview";
 
 const GAUGE_SEGMENTS = 14;
-// 列表网络列的延迟柱数:比卡片(24)少,配窄列宽,柱子仍清晰可读。
-const LIST_PING_BUCKETS = 12;
+
 
 function clamp01(value: number) {
   return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
@@ -229,7 +229,7 @@ const NodeRow = memo(function NodeRow({ uuid }: { uuid: string }) {
   const colorsVersion = useMetricColorsVersion();
   const redrawKey = `${resolvedAppearance}:${colorsVersion}`;
   const model = useNodeCardModel(uuid, {
-    pingBucketCount: LIST_PING_BUCKETS,
+    pingBucketCount: HOMEPAGE_PING_BUCKET_COUNT,
   });
 
   if (!model.node) {

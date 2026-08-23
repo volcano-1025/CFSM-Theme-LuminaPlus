@@ -18,6 +18,7 @@ import { IpStackBadges } from "./IpStackBadges";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { resolveTouchBucketIndex, TOUCH_BUCKET_HOLD_MS } from "./touchBucketPick";
 import { useNodeCardModel } from "@/hooks/useNodeCardModel";
+import { HOMEPAGE_PING_BUCKET_COUNT } from "@/hooks/usePingOverview";
 import { speedRateColor } from "@/utils/metricTone";
 import { supportsFineHover } from "@/utils/mediaQuery";
 import {
@@ -31,7 +32,7 @@ import { formatBytes, type ByteRateDisplay } from "@/utils/format";
 import type { NodeInfo, NodeMetrics, PingOverviewItem, PingOverviewBucket } from "@/types/cfsm";
 
 // 迷你卡固定为巡检布局，不跟随紧凑卡的可选指标开关；数据仍走共享模型。
-const HEALTH_BAR_COUNT = 24;
+
 
 type MiniNode = NodeInfo & NodeMetrics;
 type MiniTag = { label: string; color: string };
@@ -425,7 +426,7 @@ export const MiniNodeCard = memo(function MiniNodeCard({
   uuid: string;
 }) {
   const model = useNodeCardModel(uuid, {
-    pingBucketCount: HEALTH_BAR_COUNT,
+    pingBucketCount: HOMEPAGE_PING_BUCKET_COUNT,
   });
 
   if (!model.node) {
