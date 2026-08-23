@@ -207,7 +207,7 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-v1.2.10 待发布（2026-08-23）——`main` 已推、`dist` 头待 CI 产出后回填。这一版四件事：
+v1.2.10 已发布（2026-08-23），`dist` 头是产物提交 `1c6fa1a`（主 chunk `index-Cp-rdXIv.js`）。这一版四件事：
 ① 四种视图的延迟/丢包柱子统一 20 格（`HOMEPAGE_PING_BUCKET_COUNT`），对齐后端新版的一小时
 20 行；② 首页「实时带宽」不再在刚打开/刷新页面时虚高、也不再一秒内跳好几次，切回标签页
 不再回放旧尖峰；③ 适配后端的 `sysConfig.show_three_net_details`；④ 每页底部加了
