@@ -392,6 +392,20 @@ export function buildPingBuckets(
       ? Math.min(MAX_SAMPLE_HOLD_MS, Math.max(metricIntervalMs, bucketMs) * 2)
       : 0;
 
+  /**
+   * 最老的那个样本要向前补多久。
+   *
+   * 补的量必须是**这个样本自己**的采样间隔，不能用全局中位数 `metricIntervalMs`：
+   * 缓冲区里混着本地实测（约 60 秒一个），中位数会被拉到 60 秒甚至更低，而窗口最老那段
+   * 是后端给的、3 分钟一行 —— 补不够，最左边那格就时空时不空。
+   * 详见调用处注释里的实测数据。上限同 {@link holdMs}，免得孤立样本把左边整段涂满。
+   */
+  const leadingHoldMs = (time: number): number => {
+    if (holdMs <= 0) return 0;
+    const gapToNext = (nextEventAfter(time) ?? time + metricIntervalMs) - time;
+    return Math.min(holdMs, Math.max(metricIntervalMs, gapToNext));
+  };
+
   const samples = (ping.samples ?? []).filter((sample) => beforeOffline(sample.time));
   for (const [order, sample] of samples.entries()) {
     if (sample.time > now) continue;
@@ -407,10 +421,16 @@ export function buildPingBuckets(
     );
     if (coverEnd <= windowStart) continue;
 
-    // 最老的一个样本向前补一个采样间隔：后端窗口跨度是 58 分钟、图表画的是 60 分钟，
-    // 不补的话最左边那格永远差一点点数据，看起来像缺了一格。
+    // 最老的一个样本向前补一段：后端一小时窗口的 20 行只跨 **57 分钟**（实测 8 台
+    // 56.7~56.9 分钟、步长 179~180 秒），而图表画的是 60 分钟，不补的话最左边那格
+    // 永远差一点点数据。补的量取「这个样本到下一个样本的实际间隔」而不是全局中位数：
+    // 2026-08-23 实测，中位数被本地实测拉到 60 秒时，只要后端最新一行还很新
+    // （age < 44 秒）第一格就是空的 —— age 在 3 分钟周期里从 0 涨到 180 秒，
+    // 于是约四分之一的时间能看到「第一格空」，这就是站长说的「有时候」。
     const coverStart =
-      order === 0 ? Math.max(sample.time - metricIntervalMs, windowStart) : sample.time;
+      order === 0
+        ? Math.max(sample.time - leadingHoldMs(sample.time), windowStart)
+        : sample.time;
 
     // 覆盖区间跨过哪些 bucket 的中点，就填哪些 —— 相当于 sample-and-hold，
     // 柱宽不随节点变化，也不会因为 bucket 边界对不齐而漏格。

@@ -150,6 +150,64 @@ describe("HOMEPAGE_PING_BUCKET_COUNT", () => {
   });
 });
 
+describe("buildPingBuckets 最左边那一格", () => {
+  /**
+   * 复刻 2026-08-23 线上的真实形状：后端一小时窗口返回 20 行、步长 180 秒，
+   * 整段只跨 57 分钟（实测 8 台 56.7~56.9 分钟），而图表画的是 60 分钟。
+   * 缓冲区末尾还混着本地实测（约 60 秒一个），把采样间隔的中位数拉低。
+   */
+  const BACKEND_STEP_MS = 180_000;
+  const LOCAL_STEP_MS = 60_000;
+
+  function windowPlusLocal(newestAgeMs: number): PingLiveSample[] {
+    const newest = NOW - newestAgeMs;
+    // 后端 20 行，最老的在 newest - 19*180s
+    const backend = Array.from({ length: 20 }, (_, index) => ({
+      time: newest - (19 - index) * BACKEND_STEP_MS,
+      ping: { ...EMPTY_CARRIER_PING, ct: 150, lossCt: 0 },
+    }));
+    // 本地实测：最近十分钟每 60 秒一个，足够把 delta 的中位数压到 60 秒
+    const local = Array.from({ length: 12 }, (_, index) => ({
+      time: NOW - (11 - index) * LOCAL_STEP_MS,
+      ping: { ...EMPTY_CARRIER_PING, ct: 152, lossCt: 0 },
+    }));
+    return [...backend, ...local].sort((left, right) => left.time - right.time);
+  }
+
+  it("fills the oldest cell no matter how fresh the newest backend row is", () => {
+    // age 在 0~180 秒之间循环（后端 3 分钟出一行）。改之前 age < 44 秒时第一格是空的，
+    // 约占周期的四分之一 —— 站长看到的「有时候第一格空」就是它。
+    for (const ageSec of [0, 10, 20, 30, 44, 60, 90, 120, 179]) {
+      const buckets = buildPingBuckets(
+        buildPingOverviewItem("node-a", 1, windowPlusLocal(ageSec * 1000)),
+        undefined,
+        NOW,
+      );
+      expect(buckets).toHaveLength(20);
+      expect(
+        buckets[0]?.value,
+        `最新一行 ${ageSec} 秒前时第一格不该是空的`,
+      ).not.toBeNull();
+    }
+  });
+
+  it("still leaves the left side empty when the data genuinely starts late", () => {
+    // 回填是有上限的（同 holdMs），不能把「这台节点只有最近十分钟的数据」也涂满。
+    const samples = Array.from({ length: 10 }, (_, index) => ({
+      time: NOW - (9 - index) * LOCAL_STEP_MS,
+      ping: { ...EMPTY_CARRIER_PING, ct: 30, lossCt: 0 },
+    }));
+    const buckets = buildPingBuckets(
+      buildPingOverviewItem("node-a", 1, samples),
+      undefined,
+      NOW,
+    );
+
+    expect(buckets[0]?.value).toBeNull();
+    expect(buckets[19]?.value).not.toBeNull();
+  });
+});
+
 describe("buildPingBuckets", () => {
   it("spreads one-minute samples across the hour window", () => {
     const samples = Array.from({ length: 60 }, (_, index) =>
