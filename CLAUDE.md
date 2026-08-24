@@ -220,16 +220,16 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-**v1.2.11 改完了、已推 preview，等站长验收后才推 main**（2026-08-24）。这一版四件事：
+**v1.2.11 站长验收通过、正在推 `main`**（2026-08-24；dist 头等 CI 出产物后回填本段）。这一版四件事：
 ① 适配后端把首页 ping/loss 窗口从 1 小时改成 2 小时（还是 20 点）—— 柱子跨度改成**自动跟着数据走**
 （`buildPingBuckets` 的 `resolvePingWindowMs`，取「最老一点到 now」），后端再调窗口前端不用动；
 ② 样本保留期跟着放宽到 2 小时 +15 分钟（`SAMPLE_TTL_MS`）；③ 去掉开页自检弹窗及其设置开关
 （`usePingDataHealthPrompt` / `pingWindowHealth` / `enablePingHealthPrompt` 全删）；
 ④ 认后端 `/api/config` 的 `latency_window{points,hours}`——有就用 `hours` 显式钉跨度、缺席回退自推，
 `points` 暂不驱动格数（`useLatencyWindowMs`；细节见「容易踩的坑」那条）。
-436 项测试通过。**注意**：`latency_window` 发这版时后端**还没上线**，只在 mockApi 里造了数据自测，
-真机得等后端下发才验得到（缺席会走回退，不会坏）。验收通过推 `main` 后，把下面这段 `dist` 头和
-pending 项回填。
+436 项测试通过。dist-preview 上验收的产物是 `840f763`（主 chunk `index-DG-N805B.js`）。
+**注意**：`latency_window` 发这版时后端**还没上线**，只在 mockApi 里造了数据自测，真机得等后端
+下发才验得到（缺席会走回退，不会坏）。
 
 v1.2.10 已发布（2026-08-23），`dist` 头是产物提交 `1c6fa1a`（主 chunk `index-Cp-rdXIv.js`）。这一版四件事：
 ① 四种视图的延迟/丢包柱子统一 20 格（`HOMEPAGE_PING_BUCKET_COUNT`），对齐后端新版的
@@ -248,16 +248,16 @@ v1.2.9（2026-08-21）在 `dist` 上有**两条同名提交**：`4b0192e` 是半
 80~140 KB/s 双向、还带 2 秒 590 KB/s 的爆发，把面板整个关掉 2.5 分钟用累计计数器差分复核，
 量级一样，与面板开不开无关。
 
-待验收（真机，都没人反馈过）：v1.2.9 的触屏点柱子看数值、v1.2.4 的 Ping 图表辅助线触屏拖动
-（不跟手就先查 `.u-over` 的 `touch-action`）。v1.2.10 的列表视图柱宽也是 pending ——
-12 根变 20 根后柱宽约从 8px 掉到 4px，本地量不了（浏览器面板隐藏时 `innerWidth` 是 0）。
+真机验收（2026-08-24 站长确认全过）：v1.2.9 的触屏点柱子看数值、v1.2.4 的 Ping 图表辅助线
+触屏拖动、v1.2.10 的列表视图柱宽（12→20 根后约 4px）—— 三项都 OK，不再是 pending。
 
 待后端 / 待确认：
 1. 新版后端**没有读过源码**，只有黑盒实测（见「容易踩的坑」那条）。旧版那三个问题
    （最近邻无距离上限、每格存最后一次上报而非聚合、无 WS 订阅就不攒桶）现象上不再复现，
    但没有源码佐证「已修」。
 2. CI 没有「同版本号重复发布」的守卫，已向用户提过，等决定。
-3. ~~`SAMPLE_TTL_MS` 与后端窗口跨度只差零点几分钟~~ —— v1.2.11 放宽到 2 小时 +15 分钟余量，已解决。
+3. `latency_window` 前端已就绪（v1.2.11），但后端 `/api/config` **还没真的下发**这个字段 ——
+   等后端上线才能真机验「按 hours 钉跨度」，在那之前走「从数据自推」回退。
 
 v1.2.5 遗留：`src/pages/Traffic.tsx`、`useTodayTrafficStats`、`utils/trafficStats.ts` 与
 `components/traffic/` 已无人引用（`#/traffic` 路由与首页入口都摘掉了，2026-08-23 复核仍是
