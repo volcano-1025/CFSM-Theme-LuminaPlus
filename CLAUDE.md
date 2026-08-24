@@ -196,6 +196,12 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   这是站长要的「前端自动取 api 返回的内容」。连带 `MAX_SAMPLE_HOLD_MS` 的上限也改成跟着格宽走
   （`holdCapMs = max(它, bucketMs*2)`）：一格 6 分钟时死守 5 分钟会短于后端相邻两点的间距，
   把连续的点断成一条条缝（栽过，就是这个）。
+  **后端还会在 `/api/config` 下发 `latency_window`**（`{points,hours}`，v1.2.11 起认）：有它就
+  用 `hours` 当 `windowMs` 显式钉住跨度（`useLatencyWindowMs` → `useNodeCardModel` → `buildPingBuckets`
+  的第 5 个参数），比从数据推更稳；缺席（老后端 / 还没上线）回退到上面那套自推。`points` 暂不驱动
+  格数（格数仍固定 `HOMEPAGE_PING_BUCKET_COUNT`）。注意 `hours*3600000` 仍会被上面那对上下限夹住 ——
+  `hours` 超过 `SAMPLE_TTL_MS` 对应的小时数时会被 TTL 截住（要真放到更长得同时抬 TTL）。
+  `latency_window` 在 `SiteConfigSchema`（`/api/config`），不是 `SysConfigSchema`（`/api/servers`）。
 - **后端可以关掉首页的详细 ping/loss**（`sysConfig.show_three_net_details`，后端 2026-08-23
   新增）：关掉时 `servers[].ping[]` / `loss[]` 那份窗口不再下发，只剩每台当前的单条
   `ping_ct/cu/cm/bd`。主题据此把三网三条线回退到单线路（否则三条空线）。
@@ -214,12 +220,16 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-**v1.2.11 改完了、已推 preview，等站长验收后才推 main**（2026-08-24）。这一版三件事：
+**v1.2.11 改完了、已推 preview，等站长验收后才推 main**（2026-08-24）。这一版四件事：
 ① 适配后端把首页 ping/loss 窗口从 1 小时改成 2 小时（还是 20 点）—— 柱子跨度改成**自动跟着数据走**
 （`buildPingBuckets` 的 `resolvePingWindowMs`，取「最老一点到 now」），后端再调窗口前端不用动；
 ② 样本保留期跟着放宽到 2 小时 +15 分钟（`SAMPLE_TTL_MS`）；③ 去掉开页自检弹窗及其设置开关
-（`usePingDataHealthPrompt` / `pingWindowHealth` / `enablePingHealthPrompt` 全删）。434 项测试通过。
-验收通过推 `main` 后，记得把下面这段 `dist` 头和 pending 项回填。
+（`usePingDataHealthPrompt` / `pingWindowHealth` / `enablePingHealthPrompt` 全删）；
+④ 认后端 `/api/config` 的 `latency_window{points,hours}`——有就用 `hours` 显式钉跨度、缺席回退自推，
+`points` 暂不驱动格数（`useLatencyWindowMs`；细节见「容易踩的坑」那条）。
+436 项测试通过。**注意**：`latency_window` 发这版时后端**还没上线**，只在 mockApi 里造了数据自测，
+真机得等后端下发才验得到（缺席会走回退，不会坏）。验收通过推 `main` 后，把下面这段 `dist` 头和
+pending 项回填。
 
 v1.2.10 已发布（2026-08-23），`dist` 头是产物提交 `1c6fa1a`（主 chunk `index-Cp-rdXIv.js`）。这一版四件事：
 ① 四种视图的延迟/丢包柱子统一 20 格（`HOMEPAGE_PING_BUCKET_COUNT`），对齐后端新版的

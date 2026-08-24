@@ -153,6 +153,24 @@ describe("getPublic", () => {
     expect(config.sys.long_history_points).toBe(180);
   });
 
+  it("carries latency_window through so cards can size the ping window", async () => {
+    fetchMock.mockImplementation(
+      jsonReply({ site_title: "S", latency_window: { points: 20, hours: 2 } }),
+    );
+
+    const config = await getPublic();
+
+    expect(config.latencyWindow).toEqual({ points: 20, hours: 2 });
+  });
+
+  it("leaves latencyWindow undefined when the backend omits it (older backends)", async () => {
+    fetchMock.mockImplementation(jsonReply({ site_title: "S" }));
+
+    const config = await getPublic();
+
+    expect(config.latencyWindow).toBeUndefined();
+  });
+
   it("caches the encrypted turnstile credential for reuse", async () => {
     fetchMock.mockImplementation(
       jsonReply({ site_title: "S", turnstile_verified: "cred-1" }),

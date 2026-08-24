@@ -539,6 +539,7 @@ export function usePingBuckets(
   count?: number,
   enabled = true,
   offlineSince?: number | null,
+  windowMs?: number,
 ): PingOverviewBucket[] {
   const { samples, metricIntervalMs, emptyTimes } = ping;
   // 数据引用不变时窗口也要随时间前移,否则时间轴最多滞后约 2 个桶;分钟粒度足够
@@ -552,8 +553,9 @@ export function usePingBuckets(
             count,
             now,
             offlineSince,
+            windowMs,
           )
         : EMPTY_PING_BUCKETS,
-    [count, emptyTimes, enabled, metricIntervalMs, now, offlineSince, samples],
+    [count, emptyTimes, enabled, metricIntervalMs, now, offlineSince, samples, windowMs],
   );
 }

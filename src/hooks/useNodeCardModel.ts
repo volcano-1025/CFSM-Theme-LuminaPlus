@@ -11,6 +11,7 @@ import {
   withLiveLatency,
 } from "@/hooks/usePingOverview";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
+import { useLatencyWindowMs } from "@/hooks/usePublicConfig";
 import type { HomepagePingDisplayLine, HomepagePingLine } from "@/types/cfsm";
 import { formatRenewalPrice } from "@/utils/billing";
 import { getExpireTextColor } from "@/utils/expireStatus";
@@ -118,11 +119,15 @@ export function useNodeCardModel(
     metrics && metrics.online === false && metrics.updatedAt > 0
       ? metrics.updatedAt
       : null;
+  // 后端下发 latency_window.hours 时用它定柱子跨度；缺席就传 undefined，回退到
+  // buildPingBuckets 的「从数据自推跨度」。四种视图都走这里，口径统一。
+  const latencyWindowMs = useLatencyWindowMs();
   const pingBuckets = usePingBuckets(
     ping,
     pingBucketCount,
     !multiPingActive,
     offlineSince,
+    latencyWindowMs,
   );
   // 与 usePingBuckets 同理:窗口按分钟前移,不依赖数据刷新才滑动。
   const bucketNow = useMinuteClock(multiPingActive);
@@ -148,12 +153,19 @@ export function useNodeCardModel(
         };
       return {
         ...line,
-        buckets: buildPingBuckets(line, pingBucketCount, bucketNow, offlineSince),
+        buckets: buildPingBuckets(
+          line,
+          pingBucketCount,
+          bucketNow,
+          offlineSince,
+          latencyWindowMs,
+        ),
       };
     });
   }, [
     bucketNow,
     homepageMultiPingTaskIds,
+    latencyWindowMs,
     multiPingActive,
     offlineSince,
     pingBucketCount,

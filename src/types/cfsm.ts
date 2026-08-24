@@ -233,6 +233,18 @@ export const SiteConfigSchema = z
     verified: z.boolean().default(false),
     turnstile_verified: looseString.nullish().transform((v) => v ?? ""),
     long_history_points: looseNumber.default(120),
+    /**
+     * 后端下发的首页延迟窗口口径：`points`=柱子格数、`hours`=窗口跨度（小时）。
+     * 后端后加的字段，老后端 / 还没上线时缺席 —— 前端据 `hours` 定跨度，缺席就回退到
+     * 「从数据时间戳自推」（见 usePingOverview 的 buildPingBuckets）。`points` 暂不驱动格数。
+     */
+    latency_window: z
+      .object({
+        points: looseNumber.optional(),
+        hours: looseNumber.optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 
@@ -580,4 +592,6 @@ export interface PublicConfig {
   verified: boolean;
   theme_settings: Record<string, unknown>;
   sys: SysConfig;
+  /** 后端下发的首页延迟窗口口径；缺席时前端从数据自推跨度。见 `SiteConfigSchema.latency_window`。 */
+  latencyWindow?: { points?: number; hours?: number };
 }

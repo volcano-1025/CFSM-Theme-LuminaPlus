@@ -99,6 +99,7 @@ export async function getPublic(options?: RequestOptions): Promise<PublicConfig>
     verified: config.verified,
     // 第三方主题的自定义配置是只读的，只作为主题设置的默认值来源。
     theme_settings: config.theme_options,
+    latencyWindow: config.latency_window,
     sys: {
       show_price: true,
       show_expire: true,

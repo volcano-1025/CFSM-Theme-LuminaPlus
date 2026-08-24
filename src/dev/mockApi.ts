@@ -342,6 +342,8 @@ export function installDevMockApi() {
         verified: false,
         turnstile_verified: null,
         long_history_points: 120,
+        // 后端 2026-08-24 起下发的窗口口径：20 点 / 2 小时。前端据 hours 定柱子跨度。
+        latency_window: { points: 20, hours: 2 },
       });
     }
 
