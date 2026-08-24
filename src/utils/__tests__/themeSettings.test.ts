@@ -72,18 +72,6 @@ describe("normalizeThemeSettings", () => {
     ).toBe(false);
   });
 
-  it("延迟数据自检弹窗默认开，只有显式 false 才关", () => {
-    // 数据不对时没人会主动去按刷新，得有人提一句；嫌吵的站长才关它。
-    expect(normalizeThemeSettings({}).enablePingHealthPrompt).toBe(true);
-    expect(
-      normalizeThemeSettings({ enablePingHealthPrompt: false }).enablePingHealthPrompt,
-    ).toBe(false);
-    // 缺省/脏值都当没配过，保持开启。
-    expect(
-      normalizeThemeSettings({ enablePingHealthPrompt: "no" } as never).enablePingHealthPrompt,
-    ).toBe(true);
-  });
-
   it("parses hiddenNodes from a delimited string and dedupes", () => {
     expect(normalizeThemeSettings({}).hiddenNodes).toEqual([]);
     expect(

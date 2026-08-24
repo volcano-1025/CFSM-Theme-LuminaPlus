@@ -5,8 +5,10 @@ import type { CarrierPingSnapshot } from "@/types/cfsm";
  *
  * 两个来源：
  *
- * 1. **后端窗口**（Workers 2.8.3 Beta2 起）：`/api/servers` 直接给出每台节点最近一小时的
- *    探测窗口 —— 30 个槽位、每 2 分钟一个。首屏就是完整的一小时，由 `seedPingHistory` 灌入。
+ * 1. **后端窗口**（Workers 2.8.3 Beta2 起）：`/api/servers` 直接给出每台节点最近一段时间的
+ *    探测窗口 —— 一批带真实时间戳的槽位，由 `seedPingHistory` 灌入。窗口跨度由后端决定、
+ *    这里不写死：2026-08-24 起后端从 D1 取 **2 小时**（20 个点），此前是 1 小时。跨度直接
+ *    跟着时间戳走，后端再调整前端不用改常量（见 {@link PING_WINDOW_MS} 只作基准/上限用）。
  * 2. **实时累积**：`/api/servers` 与 WebSocket 推送里一直都有 `ping_ct/cu/cm/bd` 与 `loss_*`
  *    当前值，由 `recordPingSample` 逐点累积。兜底旧版后端（那时没有窗口字段，只能从零攒），
  *    以及新版后端窗口停止滑动时补中间的空洞。
@@ -17,8 +19,9 @@ import type { CarrierPingSnapshot } from "@/types/cfsm";
  * 首页给每台节点每分钟查一次会让后端 D1 读行翻几十倍（后端作者实测约 60 倍，
  * 30 秒上报则约 120 倍）。
  *
- * 缓冲区只在内存里：首屏的完整一小时由后端窗口给，本地点只是拿来补窗口的缺口，
- * 没必要跨刷新留着（留着反而会把上次会话的陈旧样本混进来）。超过一小时的样本读取时丢弃。
+ * 缓冲区只在内存里：首屏的完整窗口由后端给，本地点只是拿来补窗口的缺口，
+ * 没必要跨刷新留着（留着反而会把上次会话的陈旧样本混进来）。超过 {@link SAMPLE_TTL_MS}
+ * 的样本读取时丢弃。
  */
 
 export interface PingLiveSample {
@@ -31,20 +34,6 @@ export interface PingLiveSample {
    * 加权的。不配权重的话，密的那段说话就大声几倍，卡片上的丢包率会被它拖着走。
    */
   weight?: number;
-}
-
-/**
- * 最近一次 `/api/servers` 窗口的成色。
- *
- * 只记「后端给了几格、其中几格是复印段」两个数 —— 首页的自检要凭它判断
- * 「柱子空成这样是后端在编数据，还是这台本来就没数据」，见 `@/utils/pingWindowHealth`。
- */
-export interface PingWindowStats {
-  /** 后端下发、且还在一小时内的格数。0 表示旧版后端没有这个字段。 */
-  slots: number;
-  /** 其中被 {@link dropBackfilledRuns} 判成复印段丢掉的格数。 */
-  dropped: number;
-  seededAt: number;
 }
 
 type Listener = () => void;
@@ -67,10 +56,18 @@ const MIN_CHANGED_SAMPLE_GAP_MS = 5_000;
  * 心跳只补密度，不影响加权 —— 权重是按样本代表的时长算的。
  */
 const MIN_SAMPLE_GAP_MS = 120_000;
-/** 一小时的图表要铺满 30 格；96 条留足余量（详情页历史回灌时会密一些）。 */
-const MAX_SAMPLES_PER_NODE = 96;
-/** 抽稀后相邻样本的最小间隔：一小时铺满上限条数，保证覆盖整段窗口。 */
-const MIN_THINNED_GAP_MS = (60 * 60 * 1000) / MAX_SAMPLES_PER_NODE;
+/**
+ * 后端首页探测窗口的**基准**跨度。2026-08-24 起后端改成输出 2 小时（20 个点），此前是 1 小时。
+ *
+ * 只作三处的基准/上下限用，**不是**画图的真实跨度 —— 柱状图画多宽由数据自己的时间范围
+ * 决定（见 usePingOverview 的 `buildPingBuckets`），后端把窗口从 1 小时调到 2 小时、或以后
+ * 再调，这个常量只影响「留多久」和「抽稀密度」，不影响一格对一个后端采样点的对应关系。
+ */
+export const PING_WINDOW_MS = 2 * 60 * 60 * 1000;
+/** 2 小时的图表按柱子数铺满即可；192 条按每 ~37 秒一个留足余量（详情页历史回灌时会密一些）。 */
+const MAX_SAMPLES_PER_NODE = 192;
+/** 抽稀后相邻样本的最小间隔：按窗口跨度铺满上限条数，保证覆盖整段窗口。 */
+const MIN_THINNED_GAP_MS = PING_WINDOW_MS / MAX_SAMPLES_PER_NODE;
 /** 后端窗口的网格步长推不出来时的兜底：实测是 2 分钟一格。 */
 const DEFAULT_WINDOW_STEP_MS = 120_000;
 /**
@@ -90,7 +87,14 @@ const DEFAULT_LOCAL_CADENCE_MS = 40_000;
  * 凭空多给一方三成），取 8 让常见的疏密比都能落在整数附近。
  */
 const WEIGHT_SCALE = 8;
-const SAMPLE_TTL_MS = 60 * 60 * 1000;
+/**
+ * 样本保留期。要盖住后端窗口的整段跨度再多留一点余量：后端 20 个点跨约 2 小时，最新一行
+ * 本身还能旧到几分钟（后端 5 分钟服务端缓存），最老那行到手时常常已经接近满窗跨度。留太紧
+ * 会把本来有真数据的最老一格丢掉（1 小时时代就踩过，靠向前回填勉强盖住）。这里给窗口跨度
+ * 加 15 分钟余量。副作用：卡片丢包率的加权平均窗口跟着变宽（本就是整段缓冲区的平均），
+ * 而这正是后端把窗口拉到 2 小时想要的口径。
+ */
+export const SAMPLE_TTL_MS = PING_WINDOW_MS + 15 * 60 * 1000;
 const MAX_PERSISTED_NODES = 100;
 const STORAGE_KEY = "cfsm-luminaplus:ping-live:v1";
 const PERSIST_DEBOUNCE_MS = 15_000;
@@ -99,12 +103,10 @@ const EMPTY_SAMPLES: readonly PingLiveSample[] = [];
 
 /** 本地实时累积（会持久化）。 */
 const samplesByUuid = new Map<string, readonly PingLiveSample[]>();
-/** 后端下发的一小时窗口，按节点存最近一份。 */
+/** 后端下发的探测窗口（跨度由后端定，见 {@link PING_WINDOW_MS}），按节点存最近一份。 */
 const windowByUuid = new Map<string, readonly PingLiveSample[]>();
 /** 对外可见的合并结果，引用稳定（`useSyncExternalStore` 要求）。 */
 const seriesByUuid = new Map<string, readonly PingLiveSample[]>();
-/** 最近一次窗口下发的成色，给「数据是不是有问题」的自检用。 */
-const windowStatsByUuid = new Map<string, PingWindowStats>();
 const listenersByUuid = new Map<string, Set<Listener>>();
 let hydrated = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -538,11 +540,6 @@ export function seedPingHistory(
     .filter((sample) => isFresh(sample, now))
     .sort((left, right) => left.time - right.time);
   const fresh = dropBackfilledRuns(usable);
-  windowStatsByUuid.set(uuid, {
-    slots: usable.length,
-    dropped: usable.length - fresh.length,
-    seededAt: now,
-  });
 
   const previous = windowByUuid.get(uuid);
   // 整段都是复印件时 fresh 为空：也要落盘，否则上一份（含复印件的）窗口会一直留着。
@@ -593,11 +590,6 @@ export function seedMeasuredHistory(
   schedulePersist();
 }
 
-/** 最近一次窗口下发的成色；没收到过窗口时返回 null。 */
-export function getPingWindowStats(uuid: string): PingWindowStats | null {
-  return windowStatsByUuid.get(uuid) ?? null;
-}
-
 export function getPingHistorySnapshot(uuid: string): readonly PingLiveSample[] {
   hydrate();
   const cached = seriesByUuid.get(uuid);
@@ -636,9 +628,6 @@ export function retainPingNodes(uuids: Iterable<string>): void {
   for (const uuid of [...windowByUuid.keys()]) {
     if (!keep.has(uuid)) windowByUuid.delete(uuid);
   }
-  for (const uuid of [...windowStatsByUuid.keys()]) {
-    if (!keep.has(uuid)) windowStatsByUuid.delete(uuid);
-  }
   for (const uuid of [...seriesByUuid.keys()]) {
     if (!keep.has(uuid)) seriesByUuid.delete(uuid);
   }
@@ -649,7 +638,6 @@ export function retainPingNodes(uuids: Iterable<string>): void {
 export function resetPingLiveStore(): void {
   samplesByUuid.clear();
   windowByUuid.clear();
-  windowStatsByUuid.clear();
   seriesByUuid.clear();
   listenersByUuid.clear();
   hydrated = false;

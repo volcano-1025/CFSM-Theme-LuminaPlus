@@ -104,8 +104,9 @@ describe("recordPingSample", () => {
     expect(getPingHistorySnapshot("node-a")).toEqual([]);
   });
 
-  it("drops samples that fall out of the one-hour window", () => {
-    recordPingSample("node-a", NOW - 2 * 60 * 60_000, ping({ ct: 10 }));
+  it("drops samples that fall out of the retention window", () => {
+    // 保留期比后端 2 小时窗口多留一点余量（见 SAMPLE_TTL_MS），3 小时前的样本一定过期。
+    recordPingSample("node-a", NOW - 3 * 60 * 60_000, ping({ ct: 10 }));
     recordPingSample("node-a", NOW, ping({ ct: 20 }));
 
     expect(getPingHistorySnapshot("node-a").map((s) => s.ping.ct)).toEqual([20]);
@@ -116,7 +117,7 @@ describe("recordPingSample", () => {
       recordPingSample("node-a", NOW + i * 60_000, ping({ ct: i % 90 }));
     }
 
-    expect(getPingHistorySnapshot("node-a").length).toBeLessThanOrEqual(96);
+    expect(getPingHistorySnapshot("node-a").length).toBeLessThanOrEqual(192);
   });
 
   it("notifies subscribers of the affected node only", () => {

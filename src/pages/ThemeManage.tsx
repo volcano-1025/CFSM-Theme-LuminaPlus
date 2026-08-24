@@ -253,7 +253,6 @@ function pickManagedThemeSettings(settings: ResolvedThemeSettings) {
     enableHomepageMultiPing: settings.enableHomepageMultiPing,
     homepageMultiPingTaskIds: settings.homepageMultiPingTaskIds,
     fakePingForUnbound: settings.fakePingForUnbound,
-    enablePingHealthPrompt: settings.enablePingHealthPrompt,
     showHomeOverview: settings.showHomeOverview,
     showGroupTabs: settings.showGroupTabs,
     showRegionBar: settings.showRegionBar,
@@ -1904,14 +1903,6 @@ export function ThemeManage() {
             title="未绑定节点显示模拟延迟"
             desc="所选线路没有探测数据的在线节点显示前端生成的模拟数据（延迟 1-10ms、丢包 0%）。仅用于视觉统一，不代表真实网络质量；后台没有为该节点配置对应线路的探测目标时会出现这种情况。"
             checked={draft.fakePingForUnbound}
-            onPatch={patch}
-          />
-
-          <ToggleRow
-            field="enablePingHealthPrompt"
-            title="延迟数据不完整时弹窗提醒"
-            desc="打开页面后自检一次：延迟柱状图大片空缺时弹窗问要不要拉一次真实采样，并写明这会消耗多少后端 D1 读取。关掉只是不再弹窗，右上角的刷新按钮照常可用。"
-            checked={draft.enablePingHealthPrompt}
             onPatch={patch}
           />
 

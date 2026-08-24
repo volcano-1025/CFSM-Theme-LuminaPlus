@@ -8,9 +8,9 @@ import {
 } from "@/hooks/usePingOverview";
 import type { PingLiveSample } from "@/services/pingLiveStore";
 import { EMPTY_CARRIER_PING } from "@/types/cfsm";
-import { HEALTH_BUCKET_COUNT } from "@/utils/pingWindowHealth";
 
 const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
 const NOW = Date.UTC(2026, 6, 17, 11, 2);
 
 function sample(
@@ -121,20 +121,18 @@ describe("buildPingOverviewItem", () => {
 });
 
 describe("HOMEPAGE_PING_BUCKET_COUNT", () => {
-  it("matches the 20 slots the backend returns for the hour window", () => {
-    // 后端 2026-08-23 起从 D1 取一小时，由 30 条改为 20 条。格数必须一一对应，
+  it("matches the 20 slots the backend returns for the window", () => {
+    // 后端返回 20 条（2026-08-24 起窗口跨度从 1 小时拉到 2 小时，格数没变）。格数必须一一对应，
     // 否则一格里会混进相邻槽位、或者反过来空出格子。
     expect(HOMEPAGE_PING_BUCKET_COUNT).toBe(20);
   });
 
-  it("keeps the health self-check on the same grid as the cards", () => {
-    // 自检判「柱子空缺」用的格数要和卡片一致，否则空缺比例的阈值会跟着飘。
-    expect(HEALTH_BUCKET_COUNT).toBe(HOMEPAGE_PING_BUCKET_COUNT);
-  });
-
-  it("is what every view gets by default, so all four card sizes line up", () => {
-    const samples = Array.from({ length: 60 }, (_, index) =>
-      sample(index, { ct: 40 + index, lossCt: 0 }),
+  it("默认按后端 2 小时窗口画 20 格：跨度自动跟着数据走，一格约 6 分钟", () => {
+    // 后端 20 个点、每 ~6 分钟一个，整段约跨 2 小时。跨度不写死，由数据自己的时间范围决定 ——
+    // 不传 windowMs 就自动取「最老一个点到 now」。
+    const STEP_MS = 6 * MINUTE_MS;
+    const samples = Array.from({ length: 20 }, (_, index) =>
+      sample((19 - index) * 6, { ct: 40 + index, lossCt: 0 }),
     );
     const buckets = buildPingBuckets(
       buildPingOverviewItem("node-a", 1, samples),
@@ -143,18 +141,18 @@ describe("HOMEPAGE_PING_BUCKET_COUNT", () => {
     );
 
     expect(buckets).toHaveLength(20);
-    // 一小时 20 格 = 一格 3 分钟，正好一个后端采样点。
-    expect(buckets[0]?.startAt).toBe(NOW - 60 * MINUTE_MS);
-    expect(buckets[0]?.endAt).toBe(NOW - 57 * MINUTE_MS);
+    expect(buckets.every((bucket) => bucket.total > 0)).toBe(true);
+    // 最老的点在 (19*6)=114 分钟前，跨度就画 114 分钟：右缘贴着 now，一格 ~5.7 分钟。
+    expect(buckets[0]?.startAt).toBe(NOW - 19 * STEP_MS);
     expect(buckets[19]?.endAt).toBe(NOW);
   });
 });
 
 describe("buildPingBuckets 最左边那一格", () => {
   /**
-   * 复刻 2026-08-23 线上的真实形状：后端一小时窗口返回 20 行、步长 180 秒，
-   * 整段只跨 57 分钟（实测 8 台 56.7~56.9 分钟），而图表画的是 60 分钟。
-   * 缓冲区末尾还混着本地实测（约 60 秒一个），把采样间隔的中位数拉低。
+   * 复刻线上的真实形状：后端窗口返回 20 行、步长 180 秒，末尾还混着本地实测（约 60 秒一个）
+   * 把采样间隔的中位数拉低。跨度改成跟着数据走之后，最老的点正好落在 windowStart，第一格
+   * 天然被盖住 —— 这组用例守的就是「无论最新一行多新，第一格都不空」。
    */
   const BACKEND_STEP_MS = 180_000;
   const LOCAL_STEP_MS = 60_000;
@@ -175,8 +173,8 @@ describe("buildPingBuckets 最左边那一格", () => {
   }
 
   it("fills the oldest cell no matter how fresh the newest backend row is", () => {
-    // age 在 0~180 秒之间循环（后端 3 分钟出一行）。改之前 age < 44 秒时第一格是空的，
-    // 约占周期的四分之一 —— 站长看到的「有时候第一格空」就是它。
+    // age 在 0~180 秒之间循环（后端每几分钟出一行）。跨度跟着数据走后，最老的点就是 windowStart，
+    // 第一格必被盖住 —— 从前固定 60 分钟窗口时 age < 44 秒第一格会空（站长说的「有时候」），现在不会。
     for (const ageSec of [0, 10, 20, 30, 44, 60, 90, 120, 179]) {
       const buckets = buildPingBuckets(
         buildPingOverviewItem("node-a", 1, windowPlusLocal(ageSec * 1000)),
@@ -192,7 +190,8 @@ describe("buildPingBuckets 最左边那一格", () => {
   });
 
   it("still leaves the left side empty when the data genuinely starts late", () => {
-    // 回填是有上限的（同 holdMs），不能把「这台节点只有最近十分钟的数据」也涂满。
+    // 数据只跨 9 分钟、不足跨度下限（30 分钟），按下限撑开，左侧照旧留空 ——
+    // 不能把「这台节点只有最近十分钟的数据」也涂满。
     const samples = Array.from({ length: 10 }, (_, index) => ({
       time: NOW - (9 - index) * LOCAL_STEP_MS,
       ping: { ...EMPTY_CARRIER_PING, ct: 30, lossCt: 0 },
@@ -209,7 +208,8 @@ describe("buildPingBuckets 最左边那一格", () => {
 });
 
 describe("buildPingBuckets", () => {
-  it("spreads one-minute samples across the hour window", () => {
+  it("spreads one-minute samples across a pinned hour window", () => {
+    // 显式钉住 60 分钟跨度（windowMs），验证格子的落位与边界；生产里跨度是自动取的。
     const samples = Array.from({ length: 60 }, (_, index) =>
       sample(index, { ct: 40 + index, lossCt: 0 }),
     );
@@ -217,6 +217,8 @@ describe("buildPingBuckets", () => {
       buildPingOverviewItem("node-a", 1, samples),
       24,
       NOW,
+      undefined,
+      HOUR_MS,
     );
 
     expect(buckets).toHaveLength(24);
@@ -234,6 +236,8 @@ describe("buildPingBuckets", () => {
       buildPingOverviewItem("node-a", 1, samples),
       24,
       NOW,
+      undefined,
+      HOUR_MS,
     );
 
     expect(buckets[0]?.value).toBeNull();
@@ -248,6 +252,8 @@ describe("buildPingBuckets", () => {
       buildPingOverviewItem("node-a", 1, [sample(1, { ct: 50, lossCt: 33 })]),
       24,
       NOW,
+      undefined,
+      HOUR_MS,
     );
     expect(partial[23]?.loss).toBeCloseTo(33, 5);
 
@@ -255,6 +261,8 @@ describe("buildPingBuckets", () => {
       buildPingOverviewItem("node-a", 1, [sample(1, { ct: 50, lossCt: 50 })]),
       24,
       NOW,
+      undefined,
+      HOUR_MS,
     );
     expect(half[23]?.loss).toBeCloseTo(50, 5);
   });
@@ -264,6 +272,8 @@ describe("buildPingBuckets", () => {
       buildPingOverviewItem("node-a", 1, [sample(1, { ct: 50, lossCt: 100 })]),
       24,
       NOW,
+      undefined,
+      HOUR_MS,
     );
     const last = buckets[23];
 
@@ -279,16 +289,17 @@ describe("buildPingBuckets", () => {
       sample(0.5, { ct: 42 }),
     ];
     const item = buildPingOverviewItem("node-a", 1, samples);
-    const filled = buildPingBuckets(item, 24, NOW)
+    const filled = buildPingBuckets(item, 24, NOW, undefined, HOUR_MS)
       .map((bucket) => (bucket.total > 0 ? "#" : "."))
       .join("");
 
     expect(filled.slice(filled.indexOf("#"))).not.toContain(".");
   });
 
-  it("fills the leftmost bucket when the window is slightly shorter than an hour", () => {
-    // 后端窗口是 30 个点 × 2 分钟 = 58 分钟，图表画 60 分钟：
-    // 最老的点大约在 59 分钟前，比第一格的中点还新，不补就永远空第一格。
+  it("fills the leftmost bucket when the pinned window is slightly longer than the data", () => {
+    // 显式钉住 60 分钟，但数据只跨 58 分钟（30 个点 × 2 分钟）：最老的点比第一格的中点还新，
+    // 靠 leadingHold 向前补一段才不会空第一格。（生产里跨度自动跟着数据走，这种情形只在
+    // 跨度撑到下限、或最老事件是空槽时出现。）
     const samples = Array.from({ length: 30 }, (_, index) =>
       sample(0.5 + (29 - index) * 2, { ct: 40 }),
     );
@@ -296,6 +307,8 @@ describe("buildPingBuckets", () => {
       buildPingOverviewItem("node-a", 1, samples),
       24,
       NOW,
+      undefined,
+      HOUR_MS,
     );
 
     expect(buckets[0]?.total).toBeGreaterThan(0);
@@ -314,7 +327,7 @@ describe("buildPingBuckets", () => {
     const item = buildPingOverviewItem("node-a", 1, samples);
 
     expect(item.emptyTimes).toHaveLength(2);
-    const buckets = buildPingBuckets(item, 24, NOW);
+    const buckets = buildPingBuckets(item, 24, NOW, undefined, HOUR_MS);
     expect(buckets.some((bucket) => bucket.total === 0)).toBe(true);
   });
 
@@ -324,7 +337,7 @@ describe("buildPingBuckets", () => {
       sample(40, { ct: 40 }),
       sample(38, { ct: 40 }),
     ]);
-    const buckets = buildPingBuckets(item, 24, NOW);
+    const buckets = buildPingBuckets(item, 24, NOW, undefined, HOUR_MS);
     const last = buckets[buckets.length - 1];
 
     expect(last?.total).toBe(0);
@@ -335,13 +348,15 @@ describe("buildPingBuckets", () => {
       buildPingOverviewItem("node-a", 1, [sample(180, { ct: 30 })]),
       24,
       NOW,
+      undefined,
+      HOUR_MS,
     );
 
     expect(buckets.every((bucket) => bucket.total === 0)).toBe(true);
   });
 
   describe("掉线", () => {
-    // 一小时 24 格 = 每格 2.5 分钟。
+    // 钉住 60 分钟跨度、24 格 = 每格 2.5 分钟，红格进度才好逐格核对。
     const hourly = Array.from({ length: 60 }, (_, index) =>
       sample(index, { ct: 40, lossCt: 0 }),
     );
@@ -351,6 +366,7 @@ describe("buildPingBuckets", () => {
         24,
         NOW,
         NOW - offlineMinutesAgo * MINUTE_MS,
+        HOUR_MS,
       );
 
     it("红格一格一格往左推，掉线不满一格时不涂红", () => {
@@ -376,6 +392,7 @@ describe("buildPingBuckets", () => {
         24,
         NOW,
         NOW - 10 * MINUTE_MS,
+        HOUR_MS,
       );
 
       expect(buckets.filter((bucket) => bucket.offline).length).toBe(4);
@@ -387,6 +404,8 @@ describe("buildPingBuckets", () => {
         buildPingOverviewItem("node-a", 1, hourly),
         24,
         NOW,
+        undefined,
+        HOUR_MS,
       );
 
       expect(buckets.some((bucket) => bucket.offline)).toBe(false);

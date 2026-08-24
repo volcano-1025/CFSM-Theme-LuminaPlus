@@ -2,10 +2,8 @@ import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { NodeGrid } from "@/components/node/NodeGrid";
 import { FloatingControls } from "@/components/shell/FloatingControls";
-import { PingHealthDialog } from "@/components/shell/PingHealthDialog";
 import { Spinner } from "@/components/ui/Spinner";
-import { useNodeStoreStatus, useShowThreeNetDetails } from "@/hooks/useNode";
-import { usePingDataHealthPrompt } from "@/hooks/usePingDataHealth";
+import { useNodeStoreStatus } from "@/hooks/useNode";
 import { usePingHistoryRefresh } from "@/hooks/usePingHistoryRefresh";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 
@@ -18,16 +16,9 @@ function HomeDashboard() {
   const themeSettings = useThemeSettings();
   const { hydrated: storeHydrated } = useNodeStoreStatus();
   const homeReady = themeSettings.isReady && storeHydrated;
-  // 刷新状态机放在这一层：快捷栏的按钮和自检弹窗点的是同一次刷新，各自持有一份状态
-  // 会让「请求在途」的互斥失效，连点就把请求打两遍。
+  // 刷新状态机放在这一层：快捷栏的按钮持有它，各处共享一份状态，
+  // 「请求在途」的互斥才生效，连点不会把请求打两遍。
   const pingRefresh = usePingHistoryRefresh();
-  // 站长可以在主题设置里关掉这个提醒（`enablePingHealthPrompt`）；关了就连自检都不跑。
-  // 后端那个「输出首页详细 ping/loss」的开关关掉时也不跑：窗口本来就不下发，柱子空是
-  // 预期而不是数据坏了，再弹窗就是每次开页都误报一遍。
-  const showThreeNetDetails = useShowThreeNetDetails();
-  const pingHealth = usePingDataHealthPrompt(
-    homeReady && themeSettings.enablePingHealthPrompt && showThreeNetDetails,
-  );
 
   return (
     <div
@@ -35,20 +26,6 @@ function HomeDashboard() {
     >
       {homeReady && <FloatingControls onExpandedChange={setControlsExpanded} pingRefresh={pingRefresh} />}
       <NodeGrid />
-      {pingHealth.summary && (
-        <PingHealthDialog
-          summary={pingHealth.summary}
-          nodeCount={pingHealth.nodeCount}
-          estimatedRows={pingHealth.estimatedRows}
-          onRefresh={() => {
-            pingHealth.dismiss();
-            // 弹窗里已经把请求数和读行数写清楚了，用户点的就是确认键，
-            // 不该再被「30 分钟内刷新过」的提醒拦一道。
-            pingRefresh.refresh({ skipReminder: true });
-          }}
-          onSkip={pingHealth.dismiss}
-        />
-      )}
     </div>
   );
 }

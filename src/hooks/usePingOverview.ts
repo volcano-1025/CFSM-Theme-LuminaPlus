@@ -4,6 +4,8 @@ import { useThemeSettings } from "@/hooks/useThemeSettings";
 import {
   getPingHistorySnapshot,
   subscribePingHistory,
+  PING_WINDOW_MS,
+  SAMPLE_TTL_MS,
   type PingLiveSample,
 } from "@/services/pingLiveStore";
 import { CARRIER_TASK_BY_ID, inferIntervalSeconds } from "@/services/cfsm/mappers";
@@ -30,18 +32,32 @@ import type { NodeViewMode } from "@/utils/themeSettings";
  * 实例详情页的 Ping 图表仍然读历史，那是用户主动打开、单节点一次的请求。
  */
 
-// 首页延迟图表显示 20 个 bucket：与后端一小时窗口的 20 个槽位一一对应，一格正好一个
-// 后端采样点（3 分钟），不因为除不尽而把相邻槽位混进同一格。
-// 后端 2026-08-23 改成从 D1 取一小时数据、由 30 条改为返回 20 条，这里跟着走；
+// 首页延迟图表显示 20 个 bucket：与后端窗口的 20 个槽位一一对应，一格正好一个后端采样点，
+// 不因为除不尽而把相邻槽位混进同一格。后端返回 20 条这个数没变（2026-08-24 起把窗口跨度从
+// 1 小时拉到 2 小时，只是每格代表的时长从 3 分钟变 6 分钟，格数照旧）。
 // **四种视图（大卡/小卡/迷你卡/列表）统一用这个数**，别再各挑各的格数 —— 格数一旦
 // 和后端槽位对不上，同一台节点在不同视图里的柱子就会错位。
 export const HOMEPAGE_PING_BUCKET_COUNT = 20;
+/**
+ * 柱状图跨度的下限。窗口跨度不写死、跟着后端数据的时间范围走（见 {@link buildPingBuckets}），
+ * 但一台刚加进来只有几分钟数据的节点不该被画成几格宽 —— 低于这个下限就按下限画，多出来的
+ * 左侧照旧留空（和从前一小时固定窗口时「数据没铺满就左边空」是一个观感）。
+ */
+const MIN_PING_WINDOW_MS = 30 * 60 * 1000;
+/** 柱状图跨度的上限：与缓冲区保留期对齐，能到手的最老样本本就不会比它更旧。 */
+const MAX_PING_WINDOW_MS = SAMPLE_TTL_MS;
 /** 样本间隔推不出来时的兜底，用于把样本投影到 bucket。 */
 const DEFAULT_SAMPLE_INTERVAL_MS = 60_000;
 /** 后端窗口是 2 分钟一个槽位，本地实测最密时探测间隔（约 60 秒）一个；限制在这个区间内。 */
 const MIN_SAMPLE_INTERVAL_MS = 20_000;
 const MAX_SAMPLE_INTERVAL_MS = 300_000;
-/** 一个样本最多向后延续多久；超过就认为数据真的断了，让图表留空。 */
+/**
+ * 一个样本最多向后延续多久的**下限**：超过就认为数据真的断了，让图表留空。
+ *
+ * 实际上限还要跟着格宽走（见 {@link buildPingBuckets} 里的 `holdCapMs`）：窗口拉到 2 小时后
+ * 一格约 6 分钟，若上限死守 5 分钟就短于后端相邻两点的间距，会把本该相连的点断开、每格之间
+ * 空一条缝。所以取「两格」和这个下限里的大者。
+ */
 const MAX_SAMPLE_HOLD_MS = 300_000;
 
 /**
@@ -320,14 +336,51 @@ function resolveOfflineSince(offlineSince?: number | null): number | null {
     : null;
 }
 
+/**
+ * 柱状图画多宽：不写死时间区，直接由数据自己的时间范围决定 —— 最老的一个事件（样本或空槽）到
+ * `now`。后端把窗口从 1 小时调到 2 小时、或以后再调，一格仍旧对着一个后端采样点，前端不用改
+ * 常量（后端作者的原话：前端不写死时间区，自动取 api 返回的内容）。夹在
+ * [{@link MIN_PING_WINDOW_MS}, {@link MAX_PING_WINDOW_MS}] 之间：太短会把「刚加进来只有几分钟
+ * 数据」的节点画成几格宽（下限内左侧照旧留空）；太长（TTL 边缘的孤立样本）会把柱子压扁。
+ * 一个数据都没有时退回 {@link PING_WINDOW_MS} 基准（此时全是空格，跨度多少无所谓）。
+ * `override` 由调用方显式给定时优先（单测用来钉死跨度）。
+ */
+function resolvePingWindowMs(
+  ping: Pick<PingOverviewItem, "samples" | "emptyTimes">,
+  offlineAt: number | null,
+  now: number,
+  override?: number,
+): number {
+  if (typeof override === "number" && Number.isFinite(override) && override > 0) {
+    return Math.min(MAX_PING_WINDOW_MS, Math.max(MIN_PING_WINDOW_MS, override));
+  }
+  let oldest = Number.POSITIVE_INFINITY;
+  const consider = (time: number) => {
+    if (
+      Number.isFinite(time) &&
+      time > 0 &&
+      time <= now &&
+      (offlineAt == null || time <= offlineAt) &&
+      time < oldest
+    ) {
+      oldest = time;
+    }
+  };
+  for (const sample of ping.samples ?? []) consider(sample.time);
+  for (const time of ping.emptyTimes ?? []) consider(time);
+  if (!Number.isFinite(oldest)) return PING_WINDOW_MS;
+  return Math.min(MAX_PING_WINDOW_MS, Math.max(MIN_PING_WINDOW_MS, now - oldest));
+}
+
 export function buildPingBuckets(
   ping: Pick<PingOverviewItem, "samples" | "metricIntervalMs" | "emptyTimes">,
   count?: number,
   now = Date.now(),
   offlineSince?: number | null,
+  windowMs?: number,
 ): PingOverviewBucket[] {
   const offlineAt = resolveOfflineSince(offlineSince);
-  const totalWindowMs = 60 * 60 * 1000;
+  const totalWindowMs = resolvePingWindowMs(ping, offlineAt, now, windowMs);
   const requestedCount = count ?? HOMEPAGE_PING_BUCKET_COUNT;
   const boundedRequestedCount =
     Number.isFinite(requestedCount) && requestedCount > 0
@@ -364,7 +417,7 @@ export function buildPingBuckets(
 
   // 一个样本代表「到下一次采样为止的这段时间」。下一次采样可能是下一个有值的样本，
   // 也可能是一个明确没有值的槽位（`emptyTimes`）—— 后者要让图表真的留空。
-  // 后端一小时窗口的最新一格常常不落在 2 分钟网格上，与上一格能差 4~5 分钟；
+  // 后端窗口的最新一格常常不落在网格上，与上一格能差好几分钟；
   // 不做延续就会在最右边凭空空出一格，而且随着 now 推进时有时无。
   // 掉线之后的样本一律不认：后端窗口可能还在按墙钟往前铺格子、沿用最后一个已知值。
   const beforeOffline = (time: number) => offlineAt == null || time <= offlineAt;
@@ -387,18 +440,24 @@ export function buildPingBuckets(
     return eventTimes[low];
   };
 
+  // 延续上限至少给「两格」：格宽随窗口跨度变化（2 小时 20 格≈6 分钟），固定 5 分钟会短于
+  // 后端相邻两点的间距，把连续的点断成一条条缝。相邻两点之间靠 `nextEventAfter` 兜住不会
+  // 过填，这个上限只在「后面没有下一个点」（末点或真断档）时才起作用。
+  const holdCapMs = Math.max(MAX_SAMPLE_HOLD_MS, bucketMs * 2);
   const holdMs =
     metricIntervalMs > 0
-      ? Math.min(MAX_SAMPLE_HOLD_MS, Math.max(metricIntervalMs, bucketMs) * 2)
+      ? Math.min(holdCapMs, Math.max(metricIntervalMs, bucketMs) * 2)
       : 0;
 
   /**
    * 最老的那个样本要向前补多久。
    *
-   * 补的量必须是**这个样本自己**的采样间隔，不能用全局中位数 `metricIntervalMs`：
-   * 缓冲区里混着本地实测（约 60 秒一个），中位数会被拉到 60 秒甚至更低，而窗口最老那段
-   * 是后端给的、3 分钟一行 —— 补不够，最左边那格就时空时不空。
-   * 详见调用处注释里的实测数据。上限同 {@link holdMs}，免得孤立样本把左边整段涂满。
+   * 跨度改成跟着数据走之后，最老样本通常正好落在 `windowStart`，向前补基本是空操作；这段仍留着
+   * 兜两种情形：① 数据跨度不足下限、按 {@link MIN_PING_WINDOW_MS} 撑开时，最老样本在 windowStart
+   * 之后，第一格会缺一点；② 最老的事件是个空槽（`emptyTimes`）、比最老的有值样本还早。
+   * 补的量取**这个样本自己**到下一个事件的实际间隔，不用全局中位数 `metricIntervalMs`：缓冲区里
+   * 混着本地实测（约 60 秒一个），中位数会被拉低，补不够左边那格就时空时不空。上限同
+   * {@link holdMs}，免得孤立样本把左边整段涂满。
    */
   const leadingHoldMs = (time: number): number => {
     if (holdMs <= 0) return 0;
@@ -421,12 +480,9 @@ export function buildPingBuckets(
     );
     if (coverEnd <= windowStart) continue;
 
-    // 最老的一个样本向前补一段：后端一小时窗口的 20 行只跨 **57 分钟**（实测 8 台
-    // 56.7~56.9 分钟、步长 179~180 秒），而图表画的是 60 分钟，不补的话最左边那格
-    // 永远差一点点数据。补的量取「这个样本到下一个样本的实际间隔」而不是全局中位数：
-    // 2026-08-23 实测，中位数被本地实测拉到 60 秒时，只要后端最新一行还很新
-    // （age < 44 秒）第一格就是空的 —— age 在 3 分钟周期里从 0 涨到 180 秒，
-    // 于是约四分之一的时间能看到「第一格空」，这就是站长说的「有时候」。
+    // 最老的一个样本向前补一段（见 {@link leadingHoldMs}）：跨度撑到下限、或最老事件是个空槽时，
+    // 最老样本在 windowStart 之后，不补的话最左边那格永远差一点点数据。补的量取「这个样本到下一个
+    // 事件的实际间隔」而不是全局中位数，免得被本地实测把中位数拉低而补不够。
     const coverStart =
       order === 0
         ? Math.max(sample.time - leadingHoldMs(sample.time), windowStart)
