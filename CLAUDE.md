@@ -220,14 +220,14 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
-**v1.2.11 站长验收通过、正在推 `main`**（2026-08-24；dist 头等 CI 出产物后回填本段）。这一版四件事：
+**v1.2.11 已发布**（2026-08-24），`dist` 头是产物提交 `be9d06c`（主 chunk `index-DG-N805B.js`；
+与 preview 上验收的 `840f763` 同一份产物）。这一版四件事：
 ① 适配后端把首页 ping/loss 窗口从 1 小时改成 2 小时（还是 20 点）—— 柱子跨度改成**自动跟着数据走**
 （`buildPingBuckets` 的 `resolvePingWindowMs`，取「最老一点到 now」），后端再调窗口前端不用动；
 ② 样本保留期跟着放宽到 2 小时 +15 分钟（`SAMPLE_TTL_MS`）；③ 去掉开页自检弹窗及其设置开关
 （`usePingDataHealthPrompt` / `pingWindowHealth` / `enablePingHealthPrompt` 全删）；
 ④ 认后端 `/api/config` 的 `latency_window{points,hours}`——有就用 `hours` 显式钉跨度、缺席回退自推，
-`points` 暂不驱动格数（`useLatencyWindowMs`；细节见「容易踩的坑」那条）。
-436 项测试通过。dist-preview 上验收的产物是 `840f763`（主 chunk `index-DG-N805B.js`）。
+`points` 暂不驱动格数（`useLatencyWindowMs`；细节见「容易踩的坑」那条）。436 项测试通过。
 **注意**：`latency_window` 发这版时后端**还没上线**，只在 mockApi 里造了数据自测，真机得等后端
 下发才验得到（缺席会走回退，不会坏）。
 
