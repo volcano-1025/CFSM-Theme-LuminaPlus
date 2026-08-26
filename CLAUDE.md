@@ -52,15 +52,15 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   huilang-me/CF-Server-Monitor 的 `theme-develop.md`）。除它以外不许调任何管理端接口。
   这条口子只写 `appearance_options.theme_options`，不碰 `site_options`、也不覆盖站点标题/
   背景图/CSP/自定义脚本；**仅登录站长可用**（要 Bearer JWT，站点开了全局验证时还要 Turnstile
-  凭证，都由 http 层从 localStorage 复用）。设置页的「保存到站点」按钮走它（`saveThemeOptions`
+  凭证，都由 http 层从 localStorage 复用）。设置页的「保存到后端」按钮走它（`saveThemeOptions`
   → `cfsmPost`），成功后自动丢本机覆盖、用刚提交的快照重播草稿。
   **访客配置仍然只进 localStorage** —— 这条没变，写入口是站长专属的便利，不是给访客的。
   站点级预设也仍可走后台「外观设置 → 主题自定义配置」手动粘 JSON（「复制配置 JSON」按钮，
   **登录站长隐藏、只对未登录/纯静态部署显示**），两条路等价，快照口径一致
   （`normalizeThemeSettings` 白名单 + `pickPaletteSettings` 配色）。
-  设置页工具栏统一「本机 / 站点」两套词：**保存到本机**（存 localStorage、只这台设备）、
-  **保存到站点**（`handleSaveToSite`，写后端、所有设备）、**改用站点配置**
-  （`handleRestoreSiteDefaults`，丢本机、拉站点那份）；改这些标签时别只改一处，
+  设置页工具栏统一「本机 / 后端」两套词：**保存到本机**（存 localStorage、只这台设备）、
+  **保存到后端**（`handleSaveToSite`，写后端、所有设备）、**改用后端配置**
+  （`handleRestoreSiteDefaults`，丢本机、拉后端那份）；改这些标签时别只改一处，
   masthead 描述与 README 的「主题设置存在本地」段要一起改。
 - 路由是 hash（`/#/`、`/#/server/:id`）；旗帜与 OS 图标走后端 `/flags`、`/os-icons`，不打包。
 
@@ -273,10 +273,10 @@ v1.2.9（2026-08-21）在 `dist` 上有**两条同名提交**：`4b0192e` 是半
    这条路现在真机可验，不再是 pending。
 
 **v1.2.12 已推 preview、待站长验收**（2026-08-26）：适配后端 2.1.1 的 `POST /api/theme_options`
-—— 设置页给登录站长加了「保存到站点」按钮，改动见 `http.ts`(`cfsmPost`)、`api.ts`
+—— 设置页给登录站长加了「保存到后端」按钮，改动见 `http.ts`(`cfsmPost`)、`api.ts`
 (`saveThemeOptions`)、`ThemeManage.tsx`（按钮 + `handleSaveToSite`）与 `api.test.ts`。
 439 项测试通过、typecheck/lint 干净。**还没推 main**（未经站长确认不推）。
-Turnstile 403 重试路径只有单测覆盖，真机得站长登录后点一次「保存到站点」才验得到 ——
+Turnstile 403 重试路径只有单测覆盖，真机得站长登录后点一次「保存到后端」才验得到 ——
 这项是本版验收的重点。
 
 v1.2.5 遗留：`src/pages/Traffic.tsx`、`useTodayTrafficStats`、`utils/trafficStats.ts` 与

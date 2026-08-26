@@ -692,7 +692,7 @@ export function ThemeManage() {
   const [copied, setCopied] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // 「保存到站点」只对登录站长开放：有 jwt_token 才显示。令牌陈旧则写请求会 401，另行提示。
+  // 「保存到后端」只对登录站长开放：有 jwt_token 才显示。令牌陈旧则写请求会 401，另行提示。
   const canSaveToSite = useMemo(() => Boolean(getJwtToken()), []);
   const savingDraftRef = useRef<ThemeDraft | null>(null);
   const editVersionRef = useRef(0);
@@ -1051,7 +1051,7 @@ export function ThemeManage() {
     } as Record<string, unknown>;
   }, [config?.theme_settings, localThemeSettings, draftThemeSettings]);
 
-  // 「复制配置 JSON」（手动粘后台）与「保存到站点」（POST /api/theme_options）用的是同一份快照。
+  // 「复制配置 JSON」（手动粘后台）与「保存到后端」（POST /api/theme_options）用的是同一份快照。
   const siteDefaultsJson = useMemo(
     () => JSON.stringify(siteDefaults, null, 2),
     [siteDefaults],
@@ -1083,18 +1083,18 @@ export function ThemeManage() {
       resetLocalThemeSettings();
       seedDrafts(normalizeThemeSettings(siteDefaults));
       void refetchConfig(); // 让其它消费者（首页等）也拿到最新站点预设。
-      setMessage("已保存到站点：所有设备与访客都会以这套配置为默认值");
+      setMessage("已保存到后端：所有设备与访客都会以这套配置为默认值");
     } catch (saveError) {
       if (saveError instanceof ApiRequestError && saveError.status === 401) {
-        setError("登录态已失效，请到 /admin 重新登录后再保存到站点（本机设置不受影响）");
+        setError("登录态已失效，请到 /admin 重新登录后再保存到后端（本机设置不受影响）");
       } else if (saveError instanceof ApiRequestError && saveError.status === 403) {
         // http 层已清掉 Turnstile 凭证；刷新 config 让全局验证弹窗重新出现。
         void refetchConfig();
-        setError("本站需要人机验证：完成弹出的验证后，再点一次「保存到站点」");
+        setError("本站需要人机验证：完成弹出的验证后，再点一次「保存到后端」");
       } else if (saveError instanceof ApiRequestError && saveError.status === 400) {
         setError("配置格式被后端拒绝（invalidThemeOptionsFormat），请把这条信息反馈给作者");
       } else {
-        setError(saveError instanceof Error ? saveError.message : "保存到站点失败");
+        setError(saveError instanceof Error ? saveError.message : "保存到后端失败");
       }
     } finally {
       setSavingSite(false);
@@ -1110,14 +1110,14 @@ export function ThemeManage() {
   /**
    * 清掉本地覆盖，回到后端 theme_options + 主题默认值。
    *
-   * 工具栏的「改用站点配置」按钮走这里：本机存过的设置只要还在，站点改的配置就永远压不过来
+   * 工具栏的「改用后端配置」按钮走这里：本机存过的设置只要还在，后端改的配置就永远压不过来
    * （合并规则是本地覆盖优先），必须先把本地那份丢掉。
    */
   const handleRestoreSiteDefaults = () => {
     resetLocalThemeSettings();
     // 表单同步回站点默认值：否则会留下一份"已被清除但仍显示"的脏草稿。
     seedDrafts(normalizeThemeSettings(config?.theme_settings));
-    setMessage("已丢弃本机设置，改用站点当前的配置");
+    setMessage("已丢弃本机设置，改用后端当前的配置");
     setError(null);
   };
 
@@ -1192,10 +1192,10 @@ export function ThemeManage() {
               onClick={handleRestoreSiteDefaults}
               disabled={saving}
               className="theme-manage-button"
-              title="放弃本机保存的设置（含配色），改用站点当前的配置（后台「外观设置 → 主题自定义配置」下发的那份）"
+              title="放弃本机保存的设置（含配色），改用后端当前的配置（后台「外观设置 → 主题自定义配置」下发的那份）"
             >
               <CloudDownload size={14} />
-              <span>改用站点配置</span>
+              <span>改用后端配置</span>
             </button>
             {!canSaveToSite && (
               <button
@@ -1214,10 +1214,10 @@ export function ThemeManage() {
                 onClick={() => void handleSaveToSite()}
                 disabled={savingSite || saving}
                 className="theme-manage-button"
-                title="把当前设置写到站点（后端），所有设备与访客都会生效；成功后本机自动跟随这套配置"
+                title="把当前设置写到后端，所有设备与访客都会生效；成功后本机自动跟随这套配置"
               >
                 {savingSite ? <Spinner size={14} /> : <CloudUpload size={14} />}
-                <span>{savingSite ? "保存中" : "保存到站点"}</span>
+                <span>{savingSite ? "保存中" : "保存到后端"}</span>
               </button>
             )}
             <button
@@ -1229,7 +1229,7 @@ export function ThemeManage() {
               className="theme-manage-button is-primary"
               title={
                 canSaveToSite
-                  ? "只保存到当前设备的浏览器，用于先在本机预览；要让所有设备生效请点「保存到站点」"
+                  ? "只保存到当前设备的浏览器，用于先在本机预览；要让所有设备生效请点「保存到后端」"
                   : "保存到当前设备的浏览器，只影响这台设备"
               }
             >
@@ -1244,7 +1244,7 @@ export function ThemeManage() {
             <h1 className="theme-masthead-title">主题设置</h1>
             <p className="theme-masthead-desc">
               {canSaveToSite
-                ? "「保存到本机」只存当前设备、用于先预览；确认后点「保存到站点」写到后端，让所有设备与访客都用这套配置。"
+                ? "「保存到本机」只存当前设备、用于先预览；确认后点「保存到后端」，让所有设备与访客都用这套配置。"
                 : "设置保存在本机浏览器，只影响当前设备；要让所有设备与访客统一，用右上角「复制配置 JSON」粘到后台「外观设置 → 主题自定义配置」。"}
             </p>
           </div>
