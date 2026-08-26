@@ -9,10 +9,11 @@ import {
   ArrowUp,
   ArrowDown,
   RotateCcw,
+  CloudUpload,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/Spinner";
 import { usePreferences } from "@/hooks/usePreferences";
 import {
-  DEFAULT_DARK_DEPTH,
   METRIC_COLOR_GROUPS,
   METRIC_COLOR_META,
   readEffectiveColors,
@@ -48,7 +49,12 @@ export function MetricColorPicker({ hidden = false }: { hidden?: boolean }) {
     resetColor,
     setDarkDepth,
     resetAll,
+    hasLocalOverrides,
     saveError,
+    canSaveToBackend,
+    savingToBackend,
+    backendSaveState,
+    saveToBackend,
   } = useMetricColorsEditor();
   const { resolvedAppearance } = usePreferences();
 
@@ -63,8 +69,6 @@ export function MetricColorPicker({ hidden = false }: { hidden?: boolean }) {
     (key: MetricColorKey) => colors[key] ?? base[key],
     [colors, base],
   );
-  const hasAny = Object.keys(colors).length > 0 || darkDepth !== DEFAULT_DARK_DEPTH;
-
   return (
     <div
       className="metric-color-picker"
@@ -74,18 +78,41 @@ export function MetricColorPicker({ hidden = false }: { hidden?: boolean }) {
     >
       <div className="metric-color-picker-head">
         <span>配色自定义</span>
-        <button
-          type="button"
-          className="metric-color-reset-all"
-          onClick={() => {
-            resetAll();
-            refreshBase();
-          }}
-          disabled={!hasAny}
-        >
-          全部重置
-        </button>
+        <div className="metric-color-head-actions">
+          {canSaveToBackend && (
+            <button
+              type="button"
+              className="metric-color-save-backend"
+              onClick={() => void saveToBackend()}
+              disabled={savingToBackend}
+              title="把当前配色（连同其它本机设置）写到后端，成为所有设备与访客的默认值"
+            >
+              {savingToBackend ? <Spinner size={12} /> : <CloudUpload size={12} />}
+              <span>{savingToBackend ? "保存中" : "保存到后端"}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="metric-color-reset-all"
+            onClick={() => {
+              resetAll();
+              refreshBase();
+            }}
+            disabled={!hasLocalOverrides}
+          >
+            全部重置
+          </button>
+        </div>
       </div>
+      {backendSaveState && (
+        <div
+          className={
+            backendSaveState.kind === "ok" ? "metric-color-notice" : "metric-color-error"
+          }
+        >
+          {backendSaveState.text}
+        </div>
+      )}
       {saveError && <div className="metric-color-error">保存失败（请确认已登录管理员）</div>}
       <div className="metric-color-group">
         <div className="metric-color-group-title">暗色背景</div>

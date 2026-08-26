@@ -415,6 +415,39 @@ body::after {
   color: var(--status-offline);
 }
 
+.metric-color-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.metric-color-save-backend {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 4px 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: #fff;
+  background: var(--accent-500);
+  transition: opacity 160ms ease;
+}
+.metric-color-save-backend:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.metric-color-save-backend:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.metric-color-notice {
+  font-size: 11px;
+  color: var(--accent-500);
+}
+
 .dark-depth-control {
   display: flex;
   flex-direction: column;

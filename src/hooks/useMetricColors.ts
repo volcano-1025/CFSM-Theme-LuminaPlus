@@ -4,8 +4,13 @@ import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useLocalThemeSettings } from "@/hooks/useThemeSettings";
 import {
   getLocalThemeSettings,
+  resetLocalThemeSettings,
   saveLocalThemeSettings,
 } from "@/services/themeSettingsStore";
+import { saveThemeOptions } from "@/services/api";
+import { getJwtToken } from "@/services/cfsm/config";
+import { ApiRequestError } from "@/services/cfsm/http";
+import { normalizeThemeSettings } from "@/utils/themeSettings";
 
 // 指标色和暗色深度存进主题设置（站点预设 + 本机覆盖），并通过 CSS 变量全局应用。
 
@@ -220,12 +225,24 @@ export function useMetricColorsSync() {
 
 /** 编辑配色：即时预览并写入本机的主题设置。 */
 export function useMetricColorsEditor() {
-  const { data: config } = usePublicConfig();
+  const { data: config, refetch: refetchConfig } = usePublicConfig();
   const localSettings = useLocalThemeSettings();
   const savedPalette = useMemo(
     () => readPaletteDraft({ ...(config?.theme_settings ?? {}), ...localSettings }),
     [config?.theme_settings, localSettings],
   );
+
+  // 后端预设（站点级）里的暗色深度。本机覆盖是否要落盘，得和「它要盖住的那个值」比，
+  // 而不是和主题默认值比 —— 否则站点预设是 60（深黑）时，选「灰黑」(=默认 0) 会被判成
+  // 「与默认相同、无需覆盖」而丢掉本机键，值又弹回站点的 60，表现为「灰黑点不上」。
+  const siteDarkDepthRef = useRef(readDarkDepthFromSettings(config?.theme_settings));
+  siteDarkDepthRef.current = readDarkDepthFromSettings(config?.theme_settings);
+
+  // 「全部重置」是否可点：只看本机有没有存过配色 / 暗色深度覆盖（跟随站点预设时不该亮）。
+  const hasLocalOverrides = useMemo(() => {
+    const l = localSettings as Record<string, unknown> | undefined;
+    return l?.[SETTINGS_KEY] != null || l?.[DARK_DEPTH_SETTINGS_KEY] != null;
+  }, [localSettings]);
 
   const [draft, setDraft] = useState<PaletteDraft>(savedPalette);
   const draftRef = useRef<PaletteDraft>(savedPalette);
@@ -257,7 +274,8 @@ export function useMetricColorsEditor() {
       const nextSettings: Record<string, unknown> = { ...getLocalThemeSettings() };
       if (Object.keys(next.colors).length > 0) nextSettings[SETTINGS_KEY] = next.colors;
       else delete nextSettings[SETTINGS_KEY];
-      if (next.darkDepth !== DEFAULT_DARK_DEPTH) {
+      // 只有和站点预设不同才落本机覆盖；相同则删键、跟随站点（选「灰黑」压 60 也能生效）。
+      if (next.darkDepth !== siteDarkDepthRef.current) {
         nextSettings[DARK_DEPTH_SETTINGS_KEY] = next.darkDepth;
       } else {
         delete nextSettings[DARK_DEPTH_SETTINGS_KEY];
@@ -298,10 +316,50 @@ export function useMetricColorsEditor() {
     [commit],
   );
 
+  // 「全部重置」= 丢掉本机覆盖、跟随站点预设：darkDepth 归到站点值（相同即删键）、清空配色覆盖。
   const resetAll = useCallback(
-    () => commit({ colors: {}, darkDepth: DEFAULT_DARK_DEPTH }),
+    () => commit({ colors: {}, darkDepth: siteDarkDepthRef.current }),
     [commit],
   );
+
+  // 登录站长可把当前配色（连同其它本机设置）一并写到后端，成为所有设备的默认值。
+  const canSaveToBackend = useMemo(() => Boolean(getJwtToken()), []);
+  const [savingToBackend, setSavingToBackend] = useState(false);
+  const [backendSaveState, setBackendSaveState] = useState<
+    { kind: "ok" | "error"; text: string } | null
+  >(null);
+
+  const saveToBackend = useCallback(async () => {
+    setBackendSaveState(null);
+    setSavingToBackend(true);
+    try {
+      // 和设置页「保存到后端」同一份快照口径：归一化白名单 + 配色两部分。
+      const merged = { ...(config?.theme_settings ?? {}), ...getLocalThemeSettings() };
+      const snapshot = {
+        ...normalizeThemeSettings(merged),
+        ...pickPaletteSettings(merged),
+      };
+      await saveThemeOptions(snapshot);
+      // 丢本机覆盖、拉最新后端：当前设备立即以刚存的后端配置为准（和设置页一致）。
+      resetLocalThemeSettings();
+      void refetchConfig();
+      setBackendSaveState({ kind: "ok", text: "已保存到后端" });
+    } catch (error) {
+      const status = error instanceof ApiRequestError ? error.status : 0;
+      const text =
+        status === 401
+          ? "登录态已失效，请到 /admin 重新登录"
+          : status === 403
+            ? "需要先完成人机验证，完成后再点一次"
+            : error instanceof Error
+              ? error.message
+              : "保存到后端失败";
+      if (status === 403) void refetchConfig();
+      setBackendSaveState({ kind: "error", text });
+    } finally {
+      setSavingToBackend(false);
+    }
+  }, [config?.theme_settings, refetchConfig]);
 
   return {
     colors: draft.colors,
@@ -310,6 +368,11 @@ export function useMetricColorsEditor() {
     resetColor,
     setDarkDepth,
     resetAll,
+    hasLocalOverrides,
+    canSaveToBackend,
+    savingToBackend,
+    backendSaveState,
+    saveToBackend,
     // 本地写入不会失败到需要提示的程度，保留字段以兼容调用方。
     saveError: false,
   };

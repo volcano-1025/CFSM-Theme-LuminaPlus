@@ -96,7 +96,16 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   配色只导用户改过的项，没改过的沿用主题默认 token（这样主题以后调默认配色，站点会跟着走）
   —— 加新的非白名单设置时记得一并考虑导出。
 - **本机设置永远压过后台预设**：合并口径是 `{...后台 theme_options, ...localStorage}`，
-  访客存过设置后，站长再改后台 JSON 也传不过去，只能靠设置页的「同步后台配置」清掉本地那份。
+  访客存过设置后，站长再改后台 JSON 也传不过去，只能靠设置页的「改用后端配置」清掉本地那份。
+- **本机覆盖要不要落盘，得和「站点预设」比，不能和「主题默认值」比**（`useMetricColorsEditor`
+  的 `commit`）：暗色深度 `darkDepth` 早先用 `!== DEFAULT_DARK_DEPTH`（默认 0=灰黑）判定是否写
+  localStorage —— 站点预设是 60（深黑）时，用户选「灰黑」(=0=默认) 会被当成「和默认相同、无需
+  覆盖」而删键，值又被站点预设的 60 盖回去，表现为**「灰黑点不上、一点就弹回深黑」**（2026-08-26
+  栽过）。改成和 `siteDarkDepthRef`（后端 theme_options 里的 darkDepth）比：只要不同就落本机覆盖。
+  `resetAll`（「全部重置」）同理归到站点值而非默认值，才能真正「跟随站点」；「全部重置」的可点
+  判定用 `hasLocalOverrides`（本机真存过 `metricColors`/`darkDepth` 键）而非「当前值≠默认」，
+  否则跟随非默认站点预设时会常亮。配色 `metricColors` 的 per-key 恢复仍是「删本机键→跟随站点色」，
+  没做「存主题默认色压站点色」，暂按现状（没人反馈）。
 - **后台改「主题自定义配置」不是立刻生效，先等两分钟再判**：后端 `loadAppearanceOptions` 有
   2 分钟内存缓存（`src/utils/settings.js` 的 `SITE_SETTINGS_TTL`，读的是 huilang-me/CF-Server-Monitor），
   保存时会清缓存，但每个 Worker isolate 各存一份，换台设备打开照样可能拿到旧的。
@@ -272,12 +281,15 @@ v1.2.9（2026-08-21）在 `dist` 上有**两条同名提交**：`4b0192e` 是半
    （`monitor.8881025.xyz` 的 `/api/config` 返回 `{hours:2,points:20}`），「按 hours 钉跨度」
    这条路现在真机可验，不再是 pending。
 
-**v1.2.12 已推 preview、待站长验收**（2026-08-26）：适配后端 2.1.1 的 `POST /api/theme_options`
-—— 设置页给登录站长加了「保存到后端」按钮，改动见 `http.ts`(`cfsmPost`)、`api.ts`
-(`saveThemeOptions`)、`ThemeManage.tsx`（按钮 + `handleSaveToSite`）与 `api.test.ts`。
-439 项测试通过、typecheck/lint 干净。**还没推 main**（未经站长确认不推）。
-Turnstile 403 重试路径只有单测覆盖，真机得站长登录后点一次「保存到后端」才验得到 ——
-这项是本版验收的重点。
+**v1.2.12 已推 preview、待站长验收**（2026-08-26）：适配后端 2.1.1 的 `POST /api/theme_options`。
+① 设置页给登录站长加「保存到后端」按钮（`http.ts` 的 `cfsmPost`、`api.ts` 的 `saveThemeOptions`、
+`ThemeManage.tsx` 的 `handleSaveToSite`、`api.test.ts`）；工具栏统一「本机/后端」两套词、登录站长
+隐藏「复制配置 JSON」，两个「保存到X」并排、发布到后端是最右主按钮。
+② 配色自定义浮层也加「保存到后端」（`useMetricColorsEditor.saveToBackend` / `MetricColorPicker`）。
+③ 修「灰黑」在站点预设非默认时点不上（`commit` 改和 `siteDarkDepthRef` 比、`resetAll` 归站点值、
+`hasLocalOverrides`）——详见「容易踩的坑」那条。439 项测试通过、typecheck/lint 干净。
+**还没推 main**（未经站长确认不推）。Turnstile 403 重试路径只有单测覆盖，真机得站长登录后点一次
+「保存到后端」才验得到 —— 这项是本版验收的重点。
 
 v1.2.5 遗留：`src/pages/Traffic.tsx`、`useTodayTrafficStats`、`utils/trafficStats.ts` 与
 `components/traffic/` 已无人引用（`#/traffic` 路由与首页入口都摘掉了，2026-08-23 复核仍是
