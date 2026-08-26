@@ -1208,25 +1208,13 @@ export function ThemeManage() {
                 <span>{copied ? "已复制" : "复制配置 JSON"}</span>
               </button>
             )}
-            {canSaveToSite && (
-              <button
-                type="button"
-                onClick={() => void handleSaveToSite()}
-                disabled={savingSite || saving}
-                className="theme-manage-button"
-                title="把当前设置写到后端，所有设备与访客都会生效；成功后本机自动跟随这套配置"
-              >
-                {savingSite ? <Spinner size={14} /> : <CloudUpload size={14} />}
-                <span>{savingSite ? "保存中" : "保存到后端"}</span>
-              </button>
-            )}
             <button
               type="button"
               onClick={handleSave}
               disabled={
                 !isDirty || saving || draftCostRateApiUrlInvalid || draftMultiPingInvalid
               }
-              className="theme-manage-button is-primary"
+              className={clsx("theme-manage-button", !canSaveToSite && "is-primary")}
               title={
                 canSaveToSite
                   ? "只保存到当前设备的浏览器，用于先在本机预览；要让所有设备生效请点「保存到后端」"
@@ -1236,6 +1224,19 @@ export function ThemeManage() {
               {saving ? <Spinner size={14} /> : <Save size={14} />}
               <span>{saving ? "保存中" : "保存到本机"}</span>
             </button>
+            {canSaveToSite && (
+              // 登录站长：发布到后端是主操作，放最右并高亮；本机保存退成次按钮在它左边。
+              <button
+                type="button"
+                onClick={() => void handleSaveToSite()}
+                disabled={savingSite || saving}
+                className="theme-manage-button is-primary"
+                title="把当前设置写到后端，所有设备与访客都会生效；成功后本机自动跟随这套配置"
+              >
+                {savingSite ? <Spinner size={14} /> : <CloudUpload size={14} />}
+                <span>{savingSite ? "保存中" : "保存到后端"}</span>
+              </button>
+            )}
           </div>
         </div>
         <div className="theme-masthead-main">
