@@ -241,6 +241,16 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 
 ## 当前状态
 
+**v1.2.12 已发布**（2026-08-26），`dist` 头是产物提交 `53ae093`（主 chunk `index-BVsBraqp.js`；
+与 preview 上验收的 `9bb03db` 同一份产物）。适配后端 2.1.1 的 `POST /api/theme_options`，三件事：
+① 设置页给登录站长加「保存到后端」按钮（`cfsmPost` / `saveThemeOptions` / `handleSaveToSite`），
+无需再复制 JSON 手动粘到后台；工具栏统一「本机 / 后端」两套词、登录站长隐藏「复制配置 JSON」，
+两个「保存到X」并排、发布到后端是最右主按钮。② 配色自定义浮层也加「保存到后端」
+（`useMetricColorsEditor.saveToBackend` / `MetricColorPicker`），并在登录站长那行省掉「配色自定义」
+标题腾地方。③ 修「灰黑」在站点预设非默认时点不上（`commit` 改和 `siteDarkDepthRef` 比、
+`resetAll` 归站点值、`hasLocalOverrides`；详见「容易踩的坑」那条）。439 项测试通过。
+**Turnstile 403 重试路径只有单测覆盖**，真机得站长登录后点一次「保存到后端」才触发（发版前未逐帧核过）。
+
 **v1.2.11 已发布**（2026-08-24），`dist` 头是产物提交 `be9d06c`（主 chunk `index-DG-N805B.js`；
 与 preview 上验收的 `840f763` 同一份产物）。这一版四件事：
 ① 适配后端把首页 ping/loss 窗口从 1 小时改成 2 小时（还是 20 点）—— 柱子跨度改成**自动跟着数据走**
@@ -280,16 +290,6 @@ v1.2.9（2026-08-21）在 `dist` 上有**两条同名提交**：`4b0192e` 是半
 3. `latency_window` 前端已就绪（v1.2.11），2026-08-26 复核**后端已在线上下发**
    （`monitor.8881025.xyz` 的 `/api/config` 返回 `{hours:2,points:20}`），「按 hours 钉跨度」
    这条路现在真机可验，不再是 pending。
-
-**v1.2.12 已推 preview、待站长验收**（2026-08-26）：适配后端 2.1.1 的 `POST /api/theme_options`。
-① 设置页给登录站长加「保存到后端」按钮（`http.ts` 的 `cfsmPost`、`api.ts` 的 `saveThemeOptions`、
-`ThemeManage.tsx` 的 `handleSaveToSite`、`api.test.ts`）；工具栏统一「本机/后端」两套词、登录站长
-隐藏「复制配置 JSON」，两个「保存到X」并排、发布到后端是最右主按钮。
-② 配色自定义浮层也加「保存到后端」（`useMetricColorsEditor.saveToBackend` / `MetricColorPicker`）。
-③ 修「灰黑」在站点预设非默认时点不上（`commit` 改和 `siteDarkDepthRef` 比、`resetAll` 归站点值、
-`hasLocalOverrides`）——详见「容易踩的坑」那条。439 项测试通过、typecheck/lint 干净。
-**还没推 main**（未经站长确认不推）。Turnstile 403 重试路径只有单测覆盖，真机得站长登录后点一次
-「保存到后端」才验得到 —— 这项是本版验收的重点。
 
 v1.2.5 遗留：`src/pages/Traffic.tsx`、`useTodayTrafficStats`、`utils/trafficStats.ts` 与
 `components/traffic/` 已无人引用（`#/traffic` 路由与首页入口都摘掉了，2026-08-23 复核仍是
