@@ -419,6 +419,8 @@ body::after {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* 标题省掉后（登录站长）也把按钮组顶到右边。 */
+  margin-left: auto;
 }
 
 .metric-color-save-backend {
@@ -431,9 +433,13 @@ body::after {
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0;
+  white-space: nowrap;
   color: #fff;
   background: var(--accent-500);
   transition: opacity 160ms ease;
+}
+.metric-color-save-backend > svg {
+  flex: 0 0 auto;
 }
 .metric-color-save-backend:hover:not(:disabled) {
   opacity: 0.85;

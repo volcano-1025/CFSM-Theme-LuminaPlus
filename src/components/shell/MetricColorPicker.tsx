@@ -77,7 +77,8 @@ export function MetricColorPicker({ hidden = false }: { hidden?: boolean }) {
       hidden={hidden}
     >
       <div className="metric-color-picker-head">
-        <span>配色自定义</span>
+        {/* 登录站长那行会挤（多个「保存到后端」按钮），省掉标题腾地方；访客那行照旧显示。 */}
+        {!canSaveToBackend && <span>配色自定义</span>}
         <div className="metric-color-head-actions">
           {canSaveToBackend && (
             <button
