@@ -50,7 +50,7 @@ export interface RequestOptions {
   base?: string;
 }
 
-function buildHeaders(): HeadersInit {
+function buildHeaders(): Record<string, string> {
   const headers: Record<string, string> = { Accept: "application/json" };
 
   const token = getJwtToken();
@@ -117,6 +117,65 @@ export async function cfsmGet<S extends z.ZodTypeAny>(
     const code = Number(body?.code);
     throw new ApiRequestError(
       body?.error || body?.message || `Request ${path} failed: ${resp.status}`,
+      resp.status,
+      path,
+      Number.isFinite(code) && code > 0 ? code : resp.status,
+    );
+  }
+
+  const json = (await resp.json()) as unknown;
+  captureTurnstileVerified(json);
+
+  const parsed = schema.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(
+      `Schema mismatch on ${path}: ${parsed.error.issues[0]?.message ?? "unknown"}`,
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * 单个后端的 POST。目前唯一的写入口是第三方主题保存自身配置（`POST /api/theme_options`，
+ * 仅登录站长可用）—— 与 GET 共用鉴权头（Bearer JWT + Turnstile），额外带 JSON body。
+ * 401 清 JWT、403 清 Turnstile 凭证的处理与 cfsmGet 一致，调用方据 status 提示。
+ */
+export async function cfsmPost<S extends z.ZodTypeAny>(
+  path: string,
+  body: unknown,
+  schema: S,
+  options?: RequestOptions,
+): Promise<z.output<S>> {
+  const base = options?.base ?? getPrimaryApiBase();
+  const url = `${base}${path}`;
+  const resp = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { ...buildHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    options?.timeout ?? DEFAULT_API_TIMEOUT_MS,
+    options?.signal,
+  );
+
+  if (!resp.ok) {
+    const errorBody = await readErrorBody(resp);
+    if (resp.status === 401) {
+      // 令牌过期：清掉，让调用方提示重新登录（写操作没有匿名降级一说）。
+      clearJwtToken();
+    }
+    if (resp.status === 403) {
+      // Turnstile 凭证失效：清掉，全局 TurnstileGate 会在下次拉 config 时重新弹验证。
+      clearTurnstileCredentials();
+    }
+    if (resp.status === 409 || errorBody?.message === "databaseUpgradeRequired") {
+      throw new DatabaseUpgradeRequiredError(path);
+    }
+    const code = Number(errorBody?.code);
+    throw new ApiRequestError(
+      errorBody?.error || errorBody?.message || `Request ${path} failed: ${resp.status}`,
       resp.status,
       path,
       Number.isFinite(code) && code > 0 ? code : resp.status,

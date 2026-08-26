@@ -48,8 +48,15 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
 - **产物目录只能有 `index.html` 和 `assets/`**，CI 有校验步骤。
 - **产物分支（`dist` / `dist-preview`）只追加提交，绝不 force-push**：主题商店的
   `versions[].commitid` 和用户锁定的 SHA 指向历史提交，重写会让旧版本用户失效。
-- **第三方主题不能调管理端接口**：主题设置只能存 localStorage，站点级预设走后台
-  「外观设置 → 主题自定义配置」。
+- **第三方主题只有一个后端写入口：`POST /api/theme_options`**（后端文档 2.1.1，
+  huilang-me/CF-Server-Monitor 的 `theme-develop.md`）。除它以外不许调任何管理端接口。
+  这条口子只写 `appearance_options.theme_options`，不碰 `site_options`、也不覆盖站点标题/
+  背景图/CSP/自定义脚本；**仅登录站长可用**（要 Bearer JWT，站点开了全局验证时还要 Turnstile
+  凭证，都由 http 层从 localStorage 复用）。设置页的「保存到站点」按钮走它（`saveThemeOptions`
+  → `cfsmPost`），成功后自动丢本机覆盖、用刚提交的快照重播草稿。
+  **访客配置仍然只进 localStorage** —— 这条没变，写入口是站长专属的便利，不是给访客的。
+  站点级预设也仍可走后台「外观设置 → 主题自定义配置」手动粘 JSON（「复制配置 JSON」按钮），
+  两条路等价，快照口径一致（`normalizeThemeSettings` 白名单 + `pickPaletteSettings` 配色）。
 - 路由是 hash（`/#/`、`/#/server/:id`）；旗帜与 OS 图标走后端 `/flags`、`/os-icons`，不打包。
 
 ## 发布流程
@@ -256,8 +263,16 @@ v1.2.9（2026-08-21）在 `dist` 上有**两条同名提交**：`4b0192e` 是半
    （最近邻无距离上限、每格存最后一次上报而非聚合、无 WS 订阅就不攒桶）现象上不再复现，
    但没有源码佐证「已修」。
 2. CI 没有「同版本号重复发布」的守卫，已向用户提过，等决定。
-3. `latency_window` 前端已就绪（v1.2.11），但后端 `/api/config` **还没真的下发**这个字段 ——
-   等后端上线才能真机验「按 hours 钉跨度」，在那之前走「从数据自推」回退。
+3. `latency_window` 前端已就绪（v1.2.11），2026-08-26 复核**后端已在线上下发**
+   （`monitor.8881025.xyz` 的 `/api/config` 返回 `{hours:2,points:20}`），「按 hours 钉跨度」
+   这条路现在真机可验，不再是 pending。
+
+**v1.2.12 已推 preview、待站长验收**（2026-08-26）：适配后端 2.1.1 的 `POST /api/theme_options`
+—— 设置页给登录站长加了「保存到站点」按钮，改动见 `http.ts`(`cfsmPost`)、`api.ts`
+(`saveThemeOptions`)、`ThemeManage.tsx`（按钮 + `handleSaveToSite`）与 `api.test.ts`。
+439 项测试通过、typecheck/lint 干净。**还没推 main**（未经站长确认不推）。
+Turnstile 403 重试路径只有单测覆盖，真机得站长登录后点一次「保存到站点」才验得到 ——
+这项是本版验收的重点。
 
 v1.2.5 遗留：`src/pages/Traffic.tsx`、`useTodayTrafficStats`、`utils/trafficStats.ts` 与
 `components/traffic/` 已无人引用（`#/traffic` 路由与首页入口都摘掉了，2026-08-23 复核仍是

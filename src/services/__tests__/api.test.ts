@@ -9,6 +9,7 @@ import {
   getServersSnapshot,
   normalizeHistoryHours,
   refreshPingHistory,
+  saveThemeOptions,
 } from "@/services/api";
 import { resetApiBaseCache } from "@/services/cfsm/config";
 import { ApiRequestError } from "@/services/cfsm/http";
@@ -211,6 +212,45 @@ describe("getMe", () => {
 
     await expect(getMe()).rejects.toBeInstanceOf(ApiRequestError);
     expect(window.localStorage.getItem("jwt_token")).toBeNull();
+  });
+});
+
+describe("saveThemeOptions", () => {
+  it("POSTs { theme_options } as JSON with the admin bearer + turnstile headers", async () => {
+    window.localStorage.setItem("jwt_token", "token");
+    window.localStorage.setItem("turnstile_verified", "cached-cred");
+    fetchMock.mockImplementation(
+      jsonReply({ success: true, theme_options: { accent: "green" }, message: "updateSuccess" }),
+    );
+
+    const res = await saveThemeOptions({ accent: "green" });
+
+    expect(res).toMatchObject({ success: true, message: "updateSuccess" });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toContain("/api/theme_options");
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer token");
+    expect(headers["Content-Type"]).toBe("application/json");
+    expect(headers["X-Turnstile-Verified"]).toBe("cached-cred");
+    expect(JSON.parse(init.body as string)).toEqual({ theme_options: { accent: "green" } });
+  });
+
+  it("drops the expired token on 401 (writes have no anonymous fallback)", async () => {
+    window.localStorage.setItem("jwt_token", "stale");
+    fetchMock.mockImplementation(jsonReply({ error: "Unauthorized", code: 401 }, 401));
+
+    await expect(saveThemeOptions({ accent: "green" })).rejects.toBeInstanceOf(ApiRequestError);
+    expect(window.localStorage.getItem("jwt_token")).toBeNull();
+  });
+
+  it("clears turnstile credentials on 403 so the gate re-challenges", async () => {
+    window.localStorage.setItem("jwt_token", "token");
+    window.localStorage.setItem("turnstile_verified", "cached-cred");
+    fetchMock.mockImplementation(jsonReply({ error: "forbidden", code: 403 }, 403));
+
+    await expect(saveThemeOptions({ accent: "green" })).rejects.toBeInstanceOf(ApiRequestError);
+    expect(window.localStorage.getItem("turnstile_verified")).toBeNull();
   });
 });
 

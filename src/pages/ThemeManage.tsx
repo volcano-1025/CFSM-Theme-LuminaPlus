@@ -9,6 +9,7 @@ import {
   ClipboardCheck,
   ClipboardCopy,
   CloudDownload,
+  CloudUpload,
   EyeOff,
   Grid3x3,
   LayoutTemplate,
@@ -32,7 +33,9 @@ import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useHourlyClock } from "@/hooks/useClock";
 import { pickPaletteSettings } from "@/hooks/useMetricColors";
 import { useLocalThemeSettings } from "@/hooks/useThemeSettings";
-import { getNodes } from "@/services/api";
+import { getNodes, saveThemeOptions } from "@/services/api";
+import { getJwtToken } from "@/services/cfsm/config";
+import { ApiRequestError } from "@/services/cfsm/http";
 import { carrierPingTasks } from "@/services/cfsm/mappers";
 import {
   getLocalThemeSettings,
@@ -685,9 +688,12 @@ export function ThemeManage() {
   const [nodeSearch, setNodeSearch] = useState("");
   const [premiumSearch, setPremiumSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savingSite, setSavingSite] = useState(false);
   const [copied, setCopied] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 「保存到站点」只对登录站长开放：有 jwt_token 才显示。令牌陈旧则写请求会 401，另行提示。
+  const canSaveToSite = useMemo(() => Boolean(getJwtToken()), []);
   const savingDraftRef = useRef<ThemeDraft | null>(null);
   const editVersionRef = useRef(0);
 
@@ -1031,7 +1037,7 @@ export function ThemeManage() {
    * 第三方主题不能写后端设置，多设备同步只能走这条路：复制 → 粘进后台 → 所有设备（以及
    * 所有访客）都以它为默认值。导出的是完整快照，包含配色等本页之外的设置。
    */
-  const siteDefaultsJson = useMemo(() => {
+  const siteDefaults = useMemo(() => {
     // 配色的口径和全站一致：站点预设打底，本机覆盖在上。normalizeThemeSettings 是白名单，
     // 认不得 metricColors / darkDepth，所以取色器调的配色要单独并回快照。
     const merged = {
@@ -1039,12 +1045,17 @@ export function ThemeManage() {
       ...localThemeSettings,
       ...draftThemeSettings,
     } as ThemeSettings & Record<string, unknown>;
-    return JSON.stringify(
-      { ...normalizeThemeSettings(merged), ...pickPaletteSettings(merged) },
-      null,
-      2,
-    );
+    return {
+      ...normalizeThemeSettings(merged),
+      ...pickPaletteSettings(merged),
+    } as Record<string, unknown>;
   }, [config?.theme_settings, localThemeSettings, draftThemeSettings]);
+
+  // 「复制配置 JSON」（手动粘后台）与「保存到站点」（POST /api/theme_options）用的是同一份快照。
+  const siteDefaultsJson = useMemo(
+    () => JSON.stringify(siteDefaults, null, 2),
+    [siteDefaults],
+  );
 
   const handleCopySiteDefaults = async () => {
     setError(null);
@@ -1056,6 +1067,38 @@ export function ThemeManage() {
     }
     setMessage(null);
     setError("复制失败，请检查浏览器的剪贴板权限");
+  };
+
+  /**
+   * 一键把当前配置写到站点级（后端 `theme_options`），替代「复制 JSON → 手动粘到后台」。
+   * 仅登录站长可用。成功后按用户选定的「自动同步」丢掉本机覆盖、用刚提交的快照重新播种草稿，
+   * 让当前设备立刻以站点预设为准（不必等 config 查询回灌）。
+   */
+  const handleSaveToSite = async () => {
+    setError(null);
+    setMessage(null);
+    setSavingSite(true);
+    try {
+      await saveThemeOptions(siteDefaults);
+      resetLocalThemeSettings();
+      seedDrafts(normalizeThemeSettings(siteDefaults));
+      void refetchConfig(); // 让其它消费者（首页等）也拿到最新站点预设。
+      setMessage("已保存到站点：所有设备与访客都会以这套配置为默认值");
+    } catch (saveError) {
+      if (saveError instanceof ApiRequestError && saveError.status === 401) {
+        setError("登录态已失效，请到 /admin 重新登录后再保存到站点（本机设置不受影响）");
+      } else if (saveError instanceof ApiRequestError && saveError.status === 403) {
+        // http 层已清掉 Turnstile 凭证；刷新 config 让全局验证弹窗重新出现。
+        void refetchConfig();
+        setError("本站需要人机验证：完成弹出的验证后，再点一次「保存到站点」");
+      } else if (saveError instanceof ApiRequestError && saveError.status === 400) {
+        setError("配置格式被后端拒绝（invalidThemeOptionsFormat），请把这条信息反馈给作者");
+      } else {
+        setError(saveError instanceof Error ? saveError.message : "保存到站点失败");
+      }
+    } finally {
+      setSavingSite(false);
+    }
   };
 
   const handleReset = () => {
@@ -1152,6 +1195,18 @@ export function ThemeManage() {
               {copied ? <ClipboardCheck size={14} /> : <ClipboardCopy size={14} />}
               <span>{copied ? "已复制" : "复制配置 JSON"}</span>
             </button>
+            {canSaveToSite && (
+              <button
+                type="button"
+                onClick={() => void handleSaveToSite()}
+                disabled={savingSite || saving}
+                className="theme-manage-button"
+                title="以登录站长身份把当前设置直接写到站点（后端 theme_options），无需再复制 JSON 手动粘贴；成功后本机会自动同步到这套配置"
+              >
+                {savingSite ? <Spinner size={14} /> : <CloudUpload size={14} />}
+                <span>{savingSite ? "保存中" : "保存到站点"}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleRestoreSiteDefaults}
@@ -1181,7 +1236,9 @@ export function ThemeManage() {
             <h1 className="theme-masthead-title">主题设置</h1>
             <p className="theme-masthead-desc">
               设置保存在本机浏览器，只影响当前设备；要让所有设备与访客统一，
-              用右上角「复制配置 JSON」粘到后台「外观设置 → 主题自定义配置」。
+              {canSaveToSite
+                ? "已登录站长可用右上角「保存到站点」一键写入后端，或「复制配置 JSON」手动粘到后台。"
+                : "用右上角「复制配置 JSON」粘到后台「外观设置 → 主题自定义配置」。"}
             </p>
           </div>
           <dl className="theme-masthead-meta">

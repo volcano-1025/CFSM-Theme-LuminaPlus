@@ -19,6 +19,7 @@ import {
   ApiRequestError,
   cfsmGet,
   cfsmGetAll,
+  cfsmPost,
   type RequestOptions,
 } from "@/services/cfsm/http";
 import {
@@ -81,6 +82,38 @@ export function normalizeHistoryHours(hours: number): number {
 
 export async function getSiteConfig(options?: RequestOptions) {
   return cfsmGet("/api/config", SiteConfigSchema, options);
+}
+
+/** `POST /api/theme_options` 的响应体（`{ success, theme_options, message }`）。 */
+const ThemeOptionsSaveSchema = z
+  .object({
+    success: z.boolean().default(true),
+    theme_options: z.record(z.string(), z.unknown()).default({}),
+    message: z.string().catch(""),
+  })
+  .passthrough();
+
+/**
+ * 把第三方主题配置写到站点级（后端 `appearance_options.theme_options`）。
+ *
+ * 后端 2.1.1 专门给第三方主题开的写入口：只更新 theme_options，不碰 site_options，也不覆盖
+ * 站点标题 / 背景图 / CSP / 自定义脚本等其它外观设置。仅登录站长可用（需 Bearer JWT，
+ * 站点开了全局验证时还需 Turnstile 凭证，两者都由 http 层从 localStorage 复用）。这条替代了
+ * 「复制 JSON → 手动粘到后台『外观设置 → 主题自定义配置』」的老路；访客配置仍只进 localStorage。
+ *
+ * body 里的 `themeOptions` 必须是非数组对象，否则后端返回 `400 invalidThemeOptionsFormat`
+ * —— 调用方（设置页）传的是归一化白名单 + 配色的快照，天然满足。
+ */
+export async function saveThemeOptions(
+  themeOptions: Record<string, unknown>,
+  options?: RequestOptions,
+) {
+  return cfsmPost(
+    "/api/theme_options",
+    { theme_options: themeOptions },
+    ThemeOptionsSaveSchema,
+    options,
+  );
 }
 
 /**
