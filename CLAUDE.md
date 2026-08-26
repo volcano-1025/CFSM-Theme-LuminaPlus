@@ -55,8 +55,13 @@ React 19 + TypeScript + Vite 8(rolldown) + Tailwind 4 + TanStack Query + uPlot +
   凭证，都由 http 层从 localStorage 复用）。设置页的「保存到站点」按钮走它（`saveThemeOptions`
   → `cfsmPost`），成功后自动丢本机覆盖、用刚提交的快照重播草稿。
   **访客配置仍然只进 localStorage** —— 这条没变，写入口是站长专属的便利，不是给访客的。
-  站点级预设也仍可走后台「外观设置 → 主题自定义配置」手动粘 JSON（「复制配置 JSON」按钮），
-  两条路等价，快照口径一致（`normalizeThemeSettings` 白名单 + `pickPaletteSettings` 配色）。
+  站点级预设也仍可走后台「外观设置 → 主题自定义配置」手动粘 JSON（「复制配置 JSON」按钮，
+  **登录站长隐藏、只对未登录/纯静态部署显示**），两条路等价，快照口径一致
+  （`normalizeThemeSettings` 白名单 + `pickPaletteSettings` 配色）。
+  设置页工具栏统一「本机 / 站点」两套词：**保存到本机**（存 localStorage、只这台设备）、
+  **保存到站点**（`handleSaveToSite`，写后端、所有设备）、**改用站点配置**
+  （`handleRestoreSiteDefaults`，丢本机、拉站点那份）；改这些标签时别只改一处，
+  masthead 描述与 README 的「主题设置存在本地」段要一起改。
 - 路由是 hash（`/#/`、`/#/server/:id`）；旗帜与 OS 图标走后端 `/flags`、`/os-icons`，不打包。
 
 ## 发布流程

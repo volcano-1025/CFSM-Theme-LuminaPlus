@@ -1110,14 +1110,14 @@ export function ThemeManage() {
   /**
    * 清掉本地覆盖，回到后端 theme_options + 主题默认值。
    *
-   * 对站长来说这就是「同步后台配置」：本机存过的设置只要还在，后台改的 JSON 就永远压不过来
+   * 工具栏的「改用站点配置」按钮走这里：本机存过的设置只要还在，站点改的配置就永远压不过来
    * （合并规则是本地覆盖优先），必须先把本地那份丢掉。
    */
   const handleRestoreSiteDefaults = () => {
     resetLocalThemeSettings();
     // 表单同步回站点默认值：否则会留下一份"已被清除但仍显示"的脏草稿。
     seedDrafts(normalizeThemeSettings(config?.theme_settings));
-    setMessage("已丢弃本机设置，改用后台最新的配置 JSON");
+    setMessage("已丢弃本机设置，改用站点当前的配置");
     setError(null);
   };
 
@@ -1182,26 +1182,39 @@ export function ThemeManage() {
               onClick={handleReset}
               disabled={!isDirty || saving}
               className="theme-manage-button"
+              title="撤销未保存的改动，回到当前生效的设置"
             >
               <RefreshCw size={14} />
               <span>重置</span>
             </button>
             <button
               type="button"
-              onClick={() => void handleCopySiteDefaults()}
+              onClick={handleRestoreSiteDefaults}
+              disabled={saving}
               className="theme-manage-button"
-              title="复制当前设置的 JSON；粘贴到后台「外观设置 → 主题自定义配置」即可让所有设备用同一套配置"
+              title="放弃本机保存的设置（含配色），改用站点当前的配置（后台「外观设置 → 主题自定义配置」下发的那份）"
             >
-              {copied ? <ClipboardCheck size={14} /> : <ClipboardCopy size={14} />}
-              <span>{copied ? "已复制" : "复制配置 JSON"}</span>
+              <CloudDownload size={14} />
+              <span>改用站点配置</span>
             </button>
+            {!canSaveToSite && (
+              <button
+                type="button"
+                onClick={() => void handleCopySiteDefaults()}
+                className="theme-manage-button"
+                title="复制当前设置的 JSON；粘贴到后台「外观设置 → 主题自定义配置」即可让所有设备用同一套配置"
+              >
+                {copied ? <ClipboardCheck size={14} /> : <ClipboardCopy size={14} />}
+                <span>{copied ? "已复制" : "复制配置 JSON"}</span>
+              </button>
+            )}
             {canSaveToSite && (
               <button
                 type="button"
                 onClick={() => void handleSaveToSite()}
                 disabled={savingSite || saving}
                 className="theme-manage-button"
-                title="以登录站长身份把当前设置直接写到站点（后端 theme_options），无需再复制 JSON 手动粘贴；成功后本机会自动同步到这套配置"
+                title="把当前设置写到站点（后端），所有设备与访客都会生效；成功后本机自动跟随这套配置"
               >
                 {savingSite ? <Spinner size={14} /> : <CloudUpload size={14} />}
                 <span>{savingSite ? "保存中" : "保存到站点"}</span>
@@ -1209,24 +1222,19 @@ export function ThemeManage() {
             )}
             <button
               type="button"
-              onClick={handleRestoreSiteDefaults}
-              disabled={saving}
-              className="theme-manage-button"
-              title="丢弃本机保存的主题设置（含配色），改用后台「外观设置 → 主题自定义配置」里最新的 JSON"
-            >
-              <CloudDownload size={14} />
-              <span>同步后台配置</span>
-            </button>
-            <button
-              type="button"
               onClick={handleSave}
               disabled={
                 !isDirty || saving || draftCostRateApiUrlInvalid || draftMultiPingInvalid
               }
               className="theme-manage-button is-primary"
+              title={
+                canSaveToSite
+                  ? "只保存到当前设备的浏览器，用于先在本机预览；要让所有设备生效请点「保存到站点」"
+                  : "保存到当前设备的浏览器，只影响这台设备"
+              }
             >
               {saving ? <Spinner size={14} /> : <Save size={14} />}
-              <span>{saving ? "保存中" : "保存设置"}</span>
+              <span>{saving ? "保存中" : "保存到本机"}</span>
             </button>
           </div>
         </div>
@@ -1235,10 +1243,9 @@ export function ThemeManage() {
             <span className="theme-masthead-kicker">LUMINAPLUS · 主题控制台</span>
             <h1 className="theme-masthead-title">主题设置</h1>
             <p className="theme-masthead-desc">
-              设置保存在本机浏览器，只影响当前设备；要让所有设备与访客统一，
               {canSaveToSite
-                ? "已登录站长可用右上角「保存到站点」一键写入后端，或「复制配置 JSON」手动粘到后台。"
-                : "用右上角「复制配置 JSON」粘到后台「外观设置 → 主题自定义配置」。"}
+                ? "「保存到本机」只存当前设备、用于先预览；确认后点「保存到站点」写到后端，让所有设备与访客都用这套配置。"
+                : "设置保存在本机浏览器，只影响当前设备；要让所有设备与访客统一，用右上角「复制配置 JSON」粘到后台「外观设置 → 主题自定义配置」。"}
             </p>
           </div>
           <dl className="theme-masthead-meta">
