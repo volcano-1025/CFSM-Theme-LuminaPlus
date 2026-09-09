@@ -319,7 +319,9 @@ function buildHistory(serverId: string, hours: number) {
       ping_bd: Math.round(clamp(21 + Math.sin(phase + 3) * 9, 1, 400)),
       ping_node_1: Math.round(clamp(46 + Math.sin(phase + 4) * 14, 1, 400)),
       ping_node_2: Math.round(clamp(96 + Math.sin(phase + 5) * 30, 1, 400)),
-      ping_node_3: null,
+      // 后端对「没配探测目标」的槽位下发的是 false（2026-09-09 实测），不是 null；
+      // 这里两种形状各造一个，确保「不存在就不展示」两条路都覆盖到。
+      ping_node_3: false,
       ping_node_4: null,
       loss_ct: 0,
       loss_cu: i % 17 === 0 ? 20 : 0,
@@ -327,7 +329,7 @@ function buildHistory(serverId: string, hours: number) {
       loss_bd: 0,
       loss_node_1: 0,
       loss_node_2: i % 23 === 0 ? 8 : 0,
-      loss_node_3: null,
+      loss_node_3: false,
       loss_node_4: null,
       load_avg: "0.42 0.38 0.31",
       kernel_version: server.kernel_version,

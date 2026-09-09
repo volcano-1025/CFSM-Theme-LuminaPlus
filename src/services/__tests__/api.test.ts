@@ -438,6 +438,28 @@ describe("getPingRecords", () => {
 
     expect(records.map((record) => record.task_id)).toEqual([1, 3]);
   });
+
+  it("drops lines the backend marks as unconfigured with false, new ones included", async () => {
+    // 后端对没配探测目标的槽位下发 false（2026-09-09 实测，历史行与快照都是这样），
+    // 站长的要求是「ping_x / loss_x 不存在就不展示」——包括老的 ping_bd。
+    fetchMock.mockImplementation(
+      jsonReply([
+        historyRow({
+          ping_bd: false as unknown as number,
+          ping_node_1: 42,
+          ping_node_2: false as unknown as number,
+          ping_node_3: null,
+        }),
+      ]),
+    );
+
+    const { records, tasks } = await getPingRecords("node-a", 6);
+
+    // 1/2/3 有值，5 = node_1 有值；4(bd) / 6(node_2) / 7(node_3) / 8(node_4) 都不产出点。
+    expect([...new Set(records.map((record) => record.task_id))]).toEqual([1, 2, 3, 5]);
+    // 详情页图表只画 tasks 里的线路，所以没数据的那几条根本不会出现在图例里。
+    expect(tasks.map((task) => task.id)).toEqual([1, 2, 3, 5]);
+  });
 });
 
 describe("refreshPingHistory", () => {
