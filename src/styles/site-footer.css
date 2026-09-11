@@ -35,9 +35,45 @@
   border-bottom-color: currentColor;
 }
 
+/* 悬停提示：在名字正上方弹出、只写版本号。不用原生 title —— 它只会弹在光标下方、样式也改不了。 */
+.site-footer-hint {
+  position: relative;
+  display: inline-block;
+}
+
+.site-footer-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 10;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.site-footer-hint:hover .site-footer-tooltip,
+.site-footer-hint:focus-within .site-footer-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.site-footer-update-hint {
+  margin-left: 6px;
+}
+
 /* 「新版 vX」：只给登录站长（见 SiteFooter）。强调色描边 + 淡染，与设置页选中态同一语言。 */
 .site-footer-update {
-  margin-left: 6px;
   padding: 0 7px;
   border: 1px solid color-mix(in srgb, var(--accent-500) 45%, transparent);
   border-radius: 999px;

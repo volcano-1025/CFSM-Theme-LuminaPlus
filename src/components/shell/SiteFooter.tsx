@@ -1,3 +1,4 @@
+import { useId, type ReactNode } from "react";
 import { useVersionInfo } from "@/hooks/useVersionInfo";
 import { formatVersionLabel } from "@/utils/versionCompare";
 
@@ -7,7 +8,7 @@ import { formatVersionLabel } from "@/utils/versionCompare";
  * 由后端作者提出，两条都放到每一页的最下面。链接写死在这里而不是走后台配置：这是「这套面板由什么构成」
  * 的事实，不是站长可配置的展示项。
  *
- * 版本号不直接显示，鼠标放到名字上才看得到（站长要页脚保持干净）。有新版本时名字后面跟一个「新版 vX」
+ * 版本号不直接显示，鼠标放到名字上才在上方弹出（站长要页脚保持干净）。有新版本时名字后面跟一个「新版 vX」
  * 小标签，只给登录站长看 —— 访客升级不了，后端也只对登录请求下发最新版本号。这是唯一的更新提醒入口：
  * 快捷栏上的小点做过又撤掉了，站长不要。
  */
@@ -22,21 +23,11 @@ export function SiteFooter() {
     <footer className="site-footer">
       <span className="site-footer-item">
         Powered by{" "}
-        <a
-          className="site-footer-link"
-          href={BACKEND_REPO_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={versionTitle("CF-Server-Monitor", backend.current)}
-        >
+        <FooterLink href={BACKEND_REPO_URL} hint={versionHint(backend.current)}>
           CF-Server-Monitor
-        </a>
+        </FooterLink>
         {backend.update && (
-          <UpdateBadge
-            href={BACKEND_REPO_URL}
-            version={backend.update}
-            title={`后端有新版本（${upgradePath(backend.current, backend.update)}）：按后端 README 的说明升级 Workers`}
-          />
+          <UpdateBadge href={BACKEND_REPO_URL} current={backend.current} update={backend.update} />
         )}
       </span>
       <span className="site-footer-sep" aria-hidden>
@@ -44,49 +35,87 @@ export function SiteFooter() {
       </span>
       <span className="site-footer-item">
         Theme by{" "}
-        <a
-          className="site-footer-link"
-          href={THEME_REPO_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={versionTitle("LuminaPlus", theme.current)}
-        >
+        <FooterLink href={THEME_REPO_URL} hint={versionHint(theme.current)}>
           LuminaPlus
-        </a>
+        </FooterLink>
         {theme.update && (
-          <UpdateBadge
-            href={THEME_CHANGELOG_URL}
-            version={theme.update}
-            title={`主题有新版本（${upgradePath(theme.current, theme.update)}）：到后台「主题商店」切换版本；点这里看更新了什么`}
-          />
+          <UpdateBadge href={THEME_CHANGELOG_URL} current={theme.current} update={theme.update} />
         )}
       </span>
     </footer>
   );
 }
 
-/** 名字上的悬停提示：`CF-Server-Monitor v2.8.5 Beta5`；版本拿不到就不给提示。 */
-function versionTitle(name: string, version: string | null): string | undefined {
-  return version ? `${name} ${formatVersionLabel(version)}` : undefined;
+function versionHint(version: string | null): string | null {
+  return version ? formatVersionLabel(version) : null;
 }
 
-/** `v1.2.15 → v1.2.16`；当前版本拿不到时只写新版本。 */
-function upgradePath(current: string | null, update: string): string {
-  return current
-    ? `${formatVersionLabel(current)} → ${formatVersionLabel(update)}`
-    : formatVersionLabel(update);
-}
-
-function UpdateBadge({ href, version, title }: { href: string; version: string; title: string }) {
+/**
+ * 悬停时在上方弹出的小提示。不用原生 `title`：浏览器只会把它弹在光标下方、样式也改不了，
+ * 而站长要的是「在上方弹、只写版本号」。
+ */
+function HintBubble({ id, children }: { id: string; children: ReactNode }) {
   return (
+    <span id={id} role="tooltip" className="site-footer-tooltip">
+      {children}
+    </span>
+  );
+}
+
+function FooterLink({
+  href,
+  hint,
+  children,
+}: {
+  href: string;
+  hint: string | null;
+  children: ReactNode;
+}) {
+  const hintId = useId();
+  const link = (
     <a
-      className="site-footer-update"
+      className="site-footer-link"
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      title={title}
+      aria-describedby={hint ? hintId : undefined}
     >
-      新版 {formatVersionLabel(version)}
+      {children}
     </a>
+  );
+  if (!hint) return link;
+  return (
+    <span className="site-footer-hint">
+      {link}
+      <HintBubble id={hintId}>{hint}</HintBubble>
+    </span>
+  );
+}
+
+/** 「新版 vX」标签；悬停同样在上方弹，写「当前 → 新版」（当前版本拿不到时只写新版本）。 */
+function UpdateBadge({
+  href,
+  current,
+  update,
+}: {
+  href: string;
+  current: string | null;
+  update: string;
+}) {
+  const hintId = useId();
+  const next = formatVersionLabel(update);
+  return (
+    <span className="site-footer-hint site-footer-update-hint">
+      <a
+        className="site-footer-update"
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-describedby={hintId}
+      >
+        新版 {next}
+      </a>
+      <HintBubble id={hintId}>{current ? `${formatVersionLabel(current)} → ${next}` : next}</HintBubble>
+    </span>
   );
 }
