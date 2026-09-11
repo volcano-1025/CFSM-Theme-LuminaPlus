@@ -155,6 +155,7 @@ export const NodeCard = memo(function NodeCard({
 
           {homepagePingLines.length > 0 ? (
             <MultiPingStatus
+              uuid={uuid}
               lines={homepagePingLines}
               density="large"
               className="card-metric-section"

@@ -6,6 +6,7 @@ import type { HomepagePingDisplayLine } from "@/types/cfsm";
 import { latencyHeatColor, lossHeatColor } from "@/utils/metricTone";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { LatencyBars } from "./LatencyBars";
+import { PingLineSwitcher } from "./PingLineSwitcher";
 import { QualityBars } from "./QualityBars";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 
@@ -13,11 +14,15 @@ type MultiPingStatusDensity = "large" | "compact";
 type MultiPingMetric = "latency" | "loss";
 
 const MultiPingMetricRow = memo(function MultiPingMetricRow({
+  uuid,
+  slot,
   line,
   metric,
   density,
   redrawKey,
 }: {
+  uuid: string;
+  slot: number;
   line: HomepagePingDisplayLine;
   metric: MultiPingMetric;
   density: MultiPingStatusDensity;
@@ -80,7 +85,7 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
         )}
       >
         {metric === "latency" && (
-          <span className="multi-ping-name">{line.taskName}</span>
+          <PingLineSwitcher uuid={uuid} slot={slot} taskName={line.taskName} />
         )}
         <strong
           className="multi-ping-value tabular"
@@ -119,11 +124,13 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
 });
 
 const MultiPingMetricColumn = memo(function MultiPingMetricColumn({
+  uuid,
   lines,
   metric,
   density,
   redrawKey,
 }: {
+  uuid: string;
   lines: HomepagePingDisplayLine[];
   metric: MultiPingMetric;
   density: MultiPingStatusDensity;
@@ -134,9 +141,13 @@ const MultiPingMetricColumn = memo(function MultiPingMetricColumn({
       className="multi-ping-metric-column"
       aria-label={metric === "latency" ? "延迟" : "丢包"}
     >
-      {lines.map((line) => (
+      {lines.map((line, slot) => (
+        // 按行号当 key，不按线路 id：访客在这一行换了线路（PingLineSwitcher）后还是同一行、
+        // 同一颗按钮，焦点能回到它身上；按线路 id 会让整行卸载重建。
         <MultiPingMetricRow
-          key={line.taskId}
+          key={slot}
+          uuid={uuid}
+          slot={slot}
           line={line}
           metric={metric}
           density={density}
@@ -148,10 +159,12 @@ const MultiPingMetricColumn = memo(function MultiPingMetricColumn({
 });
 
 export const MultiPingStatus = memo(function MultiPingStatus({
+  uuid,
   lines,
   density,
   className,
 }: {
+  uuid: string;
   lines: HomepagePingDisplayLine[];
   density: MultiPingStatusDensity;
   className?: string;
@@ -168,12 +181,14 @@ export const MultiPingStatus = memo(function MultiPingStatus({
     >
       <div className="multi-ping-columns">
         <MultiPingMetricColumn
+          uuid={uuid}
           lines={lines}
           metric="latency"
           density={density}
           redrawKey={redrawKey}
         />
         <MultiPingMetricColumn
+          uuid={uuid}
           lines={lines}
           metric="loss"
           density={density}
