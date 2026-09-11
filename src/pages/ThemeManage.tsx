@@ -34,11 +34,13 @@ import { Flag } from "@/components/ui/Flag";
 import { useCarrierNames, usePublicConfig } from "@/hooks/usePublicConfig";
 import { useHourlyClock } from "@/hooks/useClock";
 import { pickPaletteSettings } from "@/hooks/useMetricColors";
+import { useAllPingLineOverrides } from "@/hooks/usePingOverview";
 import { useLocalThemeSettings } from "@/hooks/useThemeSettings";
 import { getNodes, saveThemeOptions } from "@/services/api";
 import { getJwtToken } from "@/services/cfsm/config";
 import { ApiRequestError } from "@/services/cfsm/http";
 import { carrierPingTasks } from "@/services/cfsm/mappers";
+import { clearPingLineOverrides } from "@/services/pingLineOverrideStore";
 import {
   getLocalThemeSettings,
   resetLocalThemeSettings,
@@ -60,6 +62,7 @@ import {
   type CostPremiumEntry,
 } from "@/utils/cost";
 import { normalizeNodeIdentityList } from "@/utils/nodeIdentity";
+import { mergePingLineOverridesByNode } from "@/utils/pingLineOverrides";
 import {
   dedupeGroupLabels,
   normalizeHomeGroupOrder,
@@ -806,6 +809,9 @@ export function ThemeManage() {
   // 只取后端的话，reseed 会在 config 到达后把草稿冲回站点默认值，
   // 用户会以为自己保存的设置丢了。
   const localThemeSettings = useLocalThemeSettings();
+  // 首页卡片上点线路名换过的线路（另一份本机存储）。不归表单草稿管，只在拼 siteDefaults 快照时并进去。
+  const localLineOverrides = useAllPingLineOverrides();
+  const localLineOverrideCount = Object.keys(localLineOverrides).length;
   const sourceThemeSettings = useMemo(
     () =>
       normalizeThemeSettings({
@@ -1107,11 +1113,19 @@ export function ThemeManage() {
       ...localThemeSettings,
       ...draftThemeSettings,
     } as ThemeSettings & Record<string, unknown>;
+    const normalized = normalizeThemeSettings(merged);
     return {
-      ...normalizeThemeSettings(merged),
+      ...normalized,
+      // 卡片上换过的线路也并进快照：站长在卡片上换好、点「保存到后端」就对所有访客生效。按行叠，
+      // 本机换过的行压过站点已存的那份（见 mergePingLineOverridesByNode）。
+      homepagePingLineOverrides: mergePingLineOverridesByNode(
+        normalized.homepageMultiPingTaskIds,
+        normalized.homepagePingLineOverrides,
+        localLineOverrides,
+      ),
       ...pickPaletteSettings(merged),
     } as Record<string, unknown>;
-  }, [config?.theme_settings, localThemeSettings, draftThemeSettings]);
+  }, [config?.theme_settings, localThemeSettings, draftThemeSettings, localLineOverrides]);
 
   // 「复制配置 JSON」（手动粘后台）与「保存到后端」（POST /api/theme_options）用的是同一份快照。
   const siteDefaultsJson = useMemo(
@@ -1143,6 +1157,8 @@ export function ThemeManage() {
     try {
       await saveThemeOptions(siteDefaults);
       resetLocalThemeSettings();
+      // 卡片上换过的线路已经并进刚提交的快照；本机那份不丢的话会一直压着站点那份。
+      clearPingLineOverrides();
       seedDrafts(normalizeThemeSettings(siteDefaults));
       void refetchConfig(); // 让其它消费者（首页等）也拿到最新站点预设。
       setMessage("已保存到后端：所有设备与访客都会以这套配置为默认值");
@@ -1177,6 +1193,7 @@ export function ThemeManage() {
    */
   const handleRestoreSiteDefaults = () => {
     resetLocalThemeSettings();
+    clearPingLineOverrides();
     // 表单同步回站点默认值：否则会留下一份"已被清除但仍显示"的脏草稿。
     seedDrafts(normalizeThemeSettings(config?.theme_settings));
     setMessage("已丢弃本机设置，改用后端当前的配置");
@@ -1254,7 +1271,7 @@ export function ThemeManage() {
               onClick={handleRestoreSiteDefaults}
               disabled={saving}
               className="theme-manage-button"
-              title="放弃本机保存的设置（含配色），改用后端当前的配置（后台「外观设置 → 主题自定义配置」下发的那份）"
+              title="放弃本机保存的设置（含配色、首页卡片上换过的线路），改用后端当前的配置（后台「外观设置 → 主题自定义配置」下发的那份）"
             >
               <CloudDownload size={14} />
               <span>改用后端配置</span>
@@ -1309,6 +1326,10 @@ export function ThemeManage() {
               {canSaveToSite
                 ? "「保存到本机」只存当前设备、用于先预览；确认后点「保存到后端」，让所有设备与访客都用这套配置。"
                 : "设置保存在本机浏览器，只影响当前设备；要让所有设备与访客统一，用右上角「复制配置 JSON」粘到后台「外观设置 → 主题自定义配置」。"}
+              {localLineOverrideCount > 0 &&
+                ` 首页卡片上换过线路的 ${localLineOverrideCount} 台节点，也会一起写进${
+                  canSaveToSite ? "后端" : "配置 JSON"
+                }。`}
             </p>
           </div>
           <dl className="theme-masthead-meta">

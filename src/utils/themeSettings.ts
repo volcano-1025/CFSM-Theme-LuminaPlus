@@ -24,6 +24,11 @@ import {
   normalizeHomepagePingTaskBindings,
   type HomepagePingTaskBindings,
 } from "@/utils/pingTasks";
+import {
+  EMPTY_PING_LINE_OVERRIDES_BY_NODE,
+  normalizePingLineOverridesByNode,
+  type PingLineOverridesByNode,
+} from "@/utils/pingLineOverrides";
 
 export type Appearance = "system" | "light" | "dark";
 export type NodeViewMode = "large" | "compact" | "mini" | "list";
@@ -38,6 +43,7 @@ export interface ResolvedThemeSettings {
   homepageDefaultPingTaskId: number;
   enableHomepageMultiPing: boolean;
   homepageMultiPingTaskIds: number[];
+  homepagePingLineOverrides: PingLineOverridesByNode;
   fakePingForUnbound: boolean;
   showHomeOverview: boolean;
   showGroupTabs: boolean;
@@ -78,6 +84,7 @@ export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
   homepageDefaultPingTaskId: DEFAULT_HOMEPAGE_PING_TASK_ID,
   enableHomepageMultiPing: true,
   homepageMultiPingTaskIds: [...DEFAULT_HOMEPAGE_MULTI_PING_TASK_IDS],
+  homepagePingLineOverrides: EMPTY_PING_LINE_OVERRIDES_BY_NODE,
   fakePingForUnbound: false,
   showHomeOverview: true,
   showGroupTabs: true,
@@ -197,6 +204,9 @@ export function normalizeThemeSettings(
     // 至少一条时启用（见 isHomepageMultiPingConfigured）。
     enableHomepageMultiPing: enabledUnlessFalse(settings?.enableHomepageMultiPing),
     homepageMultiPingTaskIds,
+    // 站长在卡片上点线路名换好、「保存到后端」写上来的逐节点换线（行号 → 线路 id）。线路 id 这里只校验
+    // 是正整数（util 层不认线路表）；本机那份在 pingLineOverrideStore 里另按线路表筛。
+    homepagePingLineOverrides: normalizePingLineOverridesByNode(settings?.homepagePingLineOverrides),
     // 默认关闭(需手动开启):给访客展示的是模拟数据,必须由站长显式决定。
     fakePingForUnbound: settings?.fakePingForUnbound === true,
     showHomeOverview: enabledUnlessFalse(settings?.showHomeOverview),

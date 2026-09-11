@@ -11,6 +11,24 @@ export type PingLineOverrides = Readonly<Record<string, number>>;
 /** 没换过时的共享空表：引用稳定，store 快照和 memo 依赖可以直接拿它比较。 */
 export const EMPTY_PING_LINE_OVERRIDES: PingLineOverrides = Object.freeze({});
 
+/**
+ * 各节点的覆盖表：`{ uuid: { 行号: 线路 id } }`。本机那份（`pingLineOverrideStore`）和站点那份
+ * （主题设置 `homepagePingLineOverrides`，站长「保存到后端」写上去的）是同一个形状。
+ */
+export type PingLineOverridesByNode = Readonly<Record<string, PingLineOverrides>>;
+
+export const EMPTY_PING_LINE_OVERRIDES_BY_NODE: PingLineOverridesByNode = Object.freeze({});
+
+/** 取某台节点的覆盖表。uuid 来自存储/后端内容，按普通对象的键直接读会撞上原型上的 `constructor` 之类。 */
+export function nodePingLineOverrides(
+  byNode: PingLineOverridesByNode,
+  uuid: string,
+): PingLineOverrides {
+  return Object.prototype.hasOwnProperty.call(byNode, uuid)
+    ? byNode[uuid]!
+    : EMPTY_PING_LINE_OVERRIDES;
+}
+
 const SLOT_KEY_PATTERN = /^(0|[1-9]\d*)$/;
 
 function isPositiveTaskId(value: unknown): value is number {
@@ -92,4 +110,56 @@ export function switchPingLine(
     if (id !== siteTaskIds[index]) next[String(index)] = id;
   });
   return Object.keys(next).length > 0 ? next : EMPTY_PING_LINE_OVERRIDES;
+}
+
+/** 整份各节点覆盖表的归一化：空节点、非法 uuid 丢掉，一台都不剩时返回共享空表。 */
+export function normalizePingLineOverridesByNode(
+  value: unknown,
+  isKnownTaskId?: (taskId: number) => boolean,
+): PingLineOverridesByNode {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return EMPTY_PING_LINE_OVERRIDES_BY_NODE;
+  }
+  const normalized: Record<string, PingLineOverrides> = {};
+  for (const [uuid, overrides] of Object.entries(value)) {
+    if (!uuid || uuid === "__proto__") continue;
+    const node = normalizePingLineOverrides(overrides, isKnownTaskId);
+    if (node !== EMPTY_PING_LINE_OVERRIDES) normalized[uuid] = node;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : EMPTY_PING_LINE_OVERRIDES_BY_NODE;
+}
+
+/**
+ * 「保存到后端」时把本机换过的线路并进站点那份，得到要写上去的 `homepagePingLineOverrides`。
+ *
+ * 按行叠：一行记的是「这一行显示哪条线路」，本机表不管是相对哪份默认算出来的都能直接叠，本机换过的行
+ * 压过站点已存的。然后和 `siteTaskIds` 相同的行删掉（换回站点线路 = 不再覆盖）、超出条数的行丢掉，
+ * 叠完不生效（含撞出重复行、渲染时会整份退回）的节点整台不存。
+ */
+export function mergePingLineOverridesByNode(
+  siteTaskIds: readonly number[],
+  site: PingLineOverridesByNode,
+  local: PingLineOverridesByNode,
+): PingLineOverridesByNode {
+  const merged: Record<string, PingLineOverrides> = {};
+  for (const uuid of new Set([...Object.keys(site), ...Object.keys(local)])) {
+    if (!uuid || uuid === "__proto__") continue;
+    const siteNode = nodePingLineOverrides(site, uuid);
+    // 站点那份本身已经不生效（站长后来改了线路表、撞出重复）就别拿来打底，
+    // 否则会把本机刚换的行一起拖成「不生效」而整台丢掉。
+    const base =
+      resolveNodePingLineTaskIds(siteTaskIds, siteNode) === siteTaskIds
+        ? EMPTY_PING_LINE_OVERRIDES
+        : siteNode;
+    const node: Record<string, number> = {};
+    for (const [slot, taskId] of Object.entries({
+      ...base,
+      ...nodePingLineOverrides(local, uuid),
+    })) {
+      const index = Number(slot);
+      if (index < siteTaskIds.length && taskId !== siteTaskIds[index]) node[slot] = taskId;
+    }
+    if (resolveNodePingLineTaskIds(siteTaskIds, node) !== siteTaskIds) merged[uuid] = node;
+  }
+  return Object.keys(merged).length > 0 ? merged : EMPTY_PING_LINE_OVERRIDES_BY_NODE;
 }

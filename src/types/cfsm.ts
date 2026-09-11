@@ -468,6 +468,8 @@ export interface ThemeSettings {
   homepageDefaultPingTaskId?: number;
   enableHomepageMultiPing?: boolean;
   homepageMultiPingTaskIds?: number[];
+  /** 站长在卡片上换好、「保存到后端」写上来的逐节点换线：`{ uuid: { 行号: 线路 id } }`。 */
+  homepagePingLineOverrides?: Record<string, Record<string, number>>;
   fakePingForUnbound?: boolean;
   showHomeOverview?: boolean;
   showGroupTabs?: boolean;

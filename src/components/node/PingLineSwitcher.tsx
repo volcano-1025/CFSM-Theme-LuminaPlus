@@ -9,7 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, RotateCcw } from "lucide-react";
+import { Check, RotateCcw } from "lucide-react";
 import {
   useAvailablePingTaskIds,
   useNodePingLineOverrides,
@@ -20,6 +20,7 @@ import { CARRIER_TASKS, carrierTaskName } from "@/services/cfsm/mappers";
 import { setPingLineOverrides } from "@/services/pingLineOverrideStore";
 import {
   EMPTY_PING_LINE_OVERRIDES,
+  nodePingLineOverrides,
   resolveNodePingLineTaskIds,
   switchPingLine,
 } from "@/utils/pingLineOverrides";
@@ -32,7 +33,8 @@ const VIEWPORT_MARGIN_PX = 8;
 /**
  * 多线路卡片上的线路名：点开给这台节点的这一行换一条线路。
  *
- * 只存本机、逐节点逐行记（`pingLineOverrideStore`），不写后端、不改站点设置。换线路不发任何请求 ——
+ * 换的先存本机、逐节点逐行记（`pingLineOverrideStore`）；登录站长到设置页点「保存到后端」才会并进
+ * 站点配置（`homepagePingLineOverrides`）、对所有访客生效。换线路本身不发任何请求 ——
  * 首页缓冲区里每个样本本来就带着全部线路的值，换的只是「画哪一条」。
  * 菜单本体只在打开时挂载：首页几十张卡 × 几行，平时每行只是一颗按钮，不订阅设置和缓冲区。
  */
@@ -72,7 +74,6 @@ export function PingLineSwitcher({
         }}
       >
         <span className="multi-ping-name-text">{taskName}</span>
-        <ChevronDown size={10} strokeWidth={2.5} aria-hidden />
       </button>
       {open && (
         <PingLineMenu
@@ -101,19 +102,24 @@ function PingLineMenu({
   onClose: (restoreFocus: boolean) => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const { homepageMultiPingTaskIds: siteTaskIds } = useThemeSettings();
+  const { homepageMultiPingTaskIds, homepagePingLineOverrides } = useThemeSettings();
   const overrides = useNodePingLineOverrides(uuid);
   const available = useAvailablePingTaskIds(uuid);
   const carrierNames = useCarrierNames();
-  const displayed = resolveNodePingLineTaskIds(siteTaskIds, overrides);
+  // 这台节点的「默认」= 站点线路表 + 站长存到后端的逐节点换线；本机换的行相对它记，「恢复默认」也回到它。
+  const nodeDefault = resolveNodePingLineTaskIds(
+    homepageMultiPingTaskIds,
+    nodePingLineOverrides(homepagePingLineOverrides, uuid),
+  );
+  const displayed = resolveNodePingLineTaskIds(nodeDefault, overrides);
   const currentTaskId = displayed[slot];
   // 有数据的线路才列（后端对没配探测目标的槽位下发 false，换过去只会是一行「无样本」）；
   // 正在显示的几条哪怕暂时没数据也列上，否则找不到当前选中项，也没法把它换回来。
   const options = CARRIER_TASKS.filter(
     (task) => available.includes(task.id) || displayed.includes(task.id),
   ).map((task) => task.id);
-  // 没有生效的覆盖时 resolve 原样返回站点那份数组，引用不同就说明这台节点换过。
-  const customized = displayed !== siteTaskIds;
+  // 没有生效的本机覆盖时 resolve 原样返回默认那份数组，引用不同就说明本机换过。
+  const customized = displayed !== nodeDefault;
 
   useLayoutEffect(() => {
     const trigger = triggerRef.current;
@@ -172,7 +178,7 @@ function PingLineMenu({
   }, [onClose, triggerRef]);
 
   const select = (taskId: number) => {
-    setPingLineOverrides(uuid, switchPingLine(siteTaskIds, overrides, slot, taskId));
+    setPingLineOverrides(uuid, switchPingLine(nodeDefault, overrides, slot, taskId));
     onClose(true);
   };
 

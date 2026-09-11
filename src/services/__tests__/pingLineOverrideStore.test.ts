@@ -76,4 +76,26 @@ describe("pingLineOverrideStore", () => {
 
     expect(calls).toBe(1);
   });
+
+  it("lists every node and clears them all at once (保存到后端之后)", async () => {
+    const store = await loadStore();
+    store.setPingLineOverrides("node-a", { "0": 4 });
+    store.setPingLineOverrides("node-b", { "1": 5 });
+    expect(store.getAllPingLineOverrides()).toEqual({
+      "node-a": { "0": 4 },
+      "node-b": { "1": 5 },
+    });
+
+    let calls = 0;
+    const unsubscribe = store.subscribePingLineOverrides(() => {
+      calls += 1;
+    });
+    store.clearPingLineOverrides();
+    store.clearPingLineOverrides();
+    unsubscribe();
+
+    expect(store.getAllPingLineOverrides()).toEqual({});
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(calls).toBe(1);
+  });
 });

@@ -474,12 +474,10 @@
   white-space: nowrap;
 }
 
-/* 线路名本身就是切换按钮（点开换这一行显示的线路，见 PingLineSwitcher）。外观还是原来那行小字，
-   只多一个淡淡的下拉箭头；上下各撑 3px 命中区、再用等量负 margin 抵掉，行距不变。 */
+/* 线路名本身就是切换按钮（点开换这一行显示的线路，见 PingLineSwitcher）。外观和原来那行小字一样，
+   不加下拉箭头（站长要求），只在悬停/展开时变深；上下各撑 3px 命中区、再用等量负 margin 抵掉，行距不变。 */
 .multi-ping-name-trigger {
   display: inline-flex;
-  align-items: center;
-  gap: 2px;
   max-width: 100%;
   margin: -3px 0;
   padding: 3px 0;
@@ -496,18 +494,6 @@
 .multi-ping-name-trigger:focus-visible {
   outline: 2px solid var(--accent-500);
   outline-offset: 1px;
-}
-
-.multi-ping-name-trigger svg {
-  display: block;
-  flex: none;
-  opacity: 0.45;
-  transition: opacity 160ms ease;
-}
-
-.multi-ping-name-trigger:hover svg,
-.multi-ping-name-trigger[aria-expanded="true"] svg {
-  opacity: 0.9;
 }
 
 .multi-ping-name-text {

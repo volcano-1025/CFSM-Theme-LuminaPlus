@@ -10,6 +10,7 @@ import {
   type PingLiveSample,
 } from "@/services/pingLiveStore";
 import {
+  getAllPingLineOverrides,
   getPingLineOverrides,
   subscribePingLineOverrides,
 } from "@/services/pingLineOverrideStore";
@@ -29,8 +30,10 @@ import type {
   PingOverviewItem,
 } from "@/types/cfsm";
 import {
+  nodePingLineOverrides,
   resolveNodePingLineTaskIds,
   type PingLineOverrides,
+  type PingLineOverridesByNode,
 } from "@/utils/pingLineOverrides";
 import { resolvePingSampleCounts } from "@/utils/pingMetrics";
 import {
@@ -352,18 +355,33 @@ export function useNodePingLineOverrides(uuid: string): PingLineOverrides {
   return useSyncExternalStore(subscribePingLineOverrides, getSnapshot, getSnapshot);
 }
 
+/** 本机所有节点换过的线路（设置页拼「保存到后端」快照用）。 */
+export function useAllPingLineOverrides(): PingLineOverridesByNode {
+  return useSyncExternalStore(
+    subscribePingLineOverrides,
+    getAllPingLineOverrides,
+    getAllPingLineOverrides,
+  );
+}
+
 /**
- * 多线路模式下这台节点实际显示哪几条线路：站点的 `homepageMultiPingTaskIds` 打底，访客在卡片上
- * 点线路名换过的行盖上去（`pingLineOverrideStore`，只存本机）。取数（上面的
- * `useNodePingOverviewLines`）和卡片排行（`useNodeCardModel`）必须共用这一份，否则会出现
- * 「行上写着电信、画的是联通」。条数仍由站点设置决定，访客只能换、不能加减。
+ * 多线路模式下这台节点实际显示哪几条线路，三层叠：站点的 `homepageMultiPingTaskIds` 打底 →
+ * 站长存到后端的逐节点换线（`homepagePingLineOverrides`）→ 本机在卡片上换过的行
+ * （`pingLineOverrideStore`）。取数（上面的 `useNodePingOverviewLines`）和卡片排行
+ * （`useNodeCardModel`）必须共用这一份，否则会出现「行上写着电信、画的是联通」。
+ * 条数仍由站点设置决定，只能换、不能加减。
  */
 export function useNodeMultiPingTaskIds(uuid: string): readonly number[] {
-  const { homepageMultiPingTaskIds } = useThemeSettings();
-  const overrides = useNodePingLineOverrides(uuid);
+  const { homepageMultiPingTaskIds, homepagePingLineOverrides } = useThemeSettings();
+  const siteOverrides = nodePingLineOverrides(homepagePingLineOverrides, uuid);
+  const localOverrides = useNodePingLineOverrides(uuid);
   return useMemo(
-    () => resolveNodePingLineTaskIds(homepageMultiPingTaskIds, overrides),
-    [homepageMultiPingTaskIds, overrides],
+    () =>
+      resolveNodePingLineTaskIds(
+        resolveNodePingLineTaskIds(homepageMultiPingTaskIds, siteOverrides),
+        localOverrides,
+      ),
+    [homepageMultiPingTaskIds, localOverrides, siteOverrides],
   );
 }
 
