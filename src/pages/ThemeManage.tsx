@@ -79,6 +79,7 @@ import {
 import {
   DEFAULT_THEME_SETTINGS,
   normalizeThemeSettings,
+  withPreferredAppearance,
   type ResolvedThemeSettings,
 } from "@/utils/themeSettings";
 import {
@@ -814,11 +815,14 @@ export function ThemeManage() {
   const localLineOverrideCount = Object.keys(localLineOverrides).length;
   const sourceThemeSettings = useMemo(
     () =>
-      normalizeThemeSettings({
-        ...(config?.theme_settings ?? {}),
-        ...localThemeSettings,
-      }),
-    [config?.theme_settings, localThemeSettings],
+      normalizeThemeSettings(
+        // 与全站读设置同口径：后台「默认外观」垫底（见 useThemeSettings），表单才显示实际生效的外观。
+        withPreferredAppearance(config?.preferredAppearance, {
+          ...(config?.theme_settings ?? {}),
+          ...localThemeSettings,
+        }),
+      ),
+    [config?.preferredAppearance, config?.theme_settings, localThemeSettings],
   );
   // 按内容判断服务端设置是否真的变化，避免同内容 refetch 重置草稿。
   const sourceSignature = useMemo(
@@ -1195,7 +1199,11 @@ export function ThemeManage() {
     resetLocalThemeSettings();
     clearPingLineOverrides();
     // 表单同步回站点默认值：否则会留下一份"已被清除但仍显示"的脏草稿。
-    seedDrafts(normalizeThemeSettings(config?.theme_settings));
+    seedDrafts(
+      normalizeThemeSettings(
+        withPreferredAppearance(config?.preferredAppearance, config?.theme_settings ?? {}),
+      ),
+    );
     setMessage("已丢弃本机设置，改用后端当前的配置");
     setError(null);
   };

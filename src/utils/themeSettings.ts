@@ -119,6 +119,27 @@ export function isAppearance(value: unknown): value is Appearance {
   return value === "system" || value === "light" || value === "dark";
 }
 
+/**
+ * 后台「外观设置 → 默认外观」（`/api/config` 的 `preferred_theme`：auto / dark / light）→ 主题的外观值。
+ * 缺席或认不出返回 undefined：老后端不下发，交给主题自己的默认（跟随系统）。
+ */
+export function resolvePreferredAppearance(value: unknown): Appearance | undefined {
+  if (value === "dark" || value === "light") return value;
+  if (value === "auto") return "system";
+  return undefined;
+}
+
+/**
+ * 把后台「默认外观」垫在主题设置的最底层：theme_options 或本机设置里写了 `defaultAppearance`
+ * 就压过它。站长在后台改默认外观，没专门给主题配过外观的站点就会跟着走。
+ */
+export function withPreferredAppearance<T extends Record<string, unknown>>(
+  preferred: Appearance | undefined,
+  settings: T,
+): T {
+  return preferred ? ({ defaultAppearance: preferred, ...settings } as T) : settings;
+}
+
 function normalizeAppearance(
   value: unknown,
   fallback: Appearance = DEFAULT_THEME_SETTINGS.defaultAppearance,

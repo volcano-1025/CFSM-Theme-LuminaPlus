@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
+  focusRealtimeNode,
   retainStore,
   getAllNodeMetaSnapshot,
   getHomeNodeSummariesSnapshot,
@@ -30,6 +31,13 @@ function useEnsured(enabled = true) {
   useEffect(() => {
     if (enabled) return retainStore();
   }, [enabled]);
+}
+
+/** 详情页：实时订阅只留正在看的这一台，离开时恢复订阅全站（见 wsStore 的 focusRealtimeNode）。 */
+export function useRealtimeFocus(uuid: string | undefined) {
+  useEffect(() => {
+    if (uuid) return focusRealtimeNode(uuid);
+  }, [uuid]);
 }
 
 export function useNodeMeta(uuid: string): NodeInfo | undefined {

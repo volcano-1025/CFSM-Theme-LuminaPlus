@@ -33,6 +33,7 @@ import {
   toNodeInfo,
 } from "@/services/cfsm/mappers";
 import { seedMeasuredHistory } from "@/services/pingLiveStore";
+import { resolvePreferredAppearance } from "@/utils/themeSettings";
 
 export { ApiRequestError, DatabaseUpgradeRequiredError } from "@/services/cfsm/http";
 
@@ -134,6 +135,8 @@ export async function getPublic(options?: RequestOptions): Promise<PublicConfig>
     // 第三方主题的自定义配置是只读的，只作为主题设置的默认值来源。
     theme_settings: config.theme_options,
     latencyWindow: config.latency_window,
+    frontendWsTimeoutMinutes: config.frontend_ws_timeout_minutes,
+    preferredAppearance: resolvePreferredAppearance(config.preferred_theme),
     // 线路名可由站长在后端改；老后端不下发这几个字段，逐条回退到主题默认名。
     // 后四条（2.8.5 Beta4 新增）的键名风格和前四条不一样，是 node_N_name。
     carrierNames: resolveCarrierNames({

@@ -242,10 +242,17 @@ export const SiteConfigSchema = z
     turnstile_site_key: looseString.default(""),
     site_title: looseString.default(""),
     display_mode: looseString.default(""),
+    /** 后台「外观设置 → 默认外观」：auto / dark / light。主题设置没写默认外观时拿它垫底。 */
+    preferred_theme: looseString.default(""),
     theme_options: z.record(z.string(), z.unknown()).default({}),
     verified: z.boolean().default(false),
     turnstile_verified: looseString.nullish().transform((v) => v ?? ""),
     long_history_points: looseNumber.default(120),
+    /**
+     * 单次前端实时连接的时长上限（分钟，0 = 不限；后端 2026-08-20 加的站点设置）。后端只下发不执行：
+     * 到点断开、问用户要不要继续都靠前端，见 wsStore 的 setRealtimeSessionLimitMinutes。
+     */
+    frontend_ws_timeout_minutes: looseNumber.default(0),
     /**
      * 站长在后台给四条线路起的名字（后端后加的字段）。缺席 / 空串就用主题的默认名
      * （电信 / 联通 / 移动 / BD），见 mappers 的 `resolveCarrierNames` —— 老后端不下发这几个
@@ -663,6 +670,10 @@ export interface PublicConfig {
   sys: SysConfig;
   /** 后端下发的首页延迟窗口口径；缺席时前端从数据自推跨度。见 `SiteConfigSchema.latency_window`。 */
   latencyWindow?: { points?: number; hours?: number };
+  /** 单次实时连接的时长上限（分钟，0 = 不限）。见 `SiteConfigSchema.frontend_ws_timeout_minutes`。 */
+  frontendWsTimeoutMinutes?: number;
+  /** 后台「默认外观」换算成主题的外观值；老后端不下发时缺席。见 `resolvePreferredAppearance`。 */
+  preferredAppearance?: "system" | "light" | "dark";
   /**
    * 四条线路的显示名：后端 `custom_*_name` 逐条覆盖，缺的沿用主题默认名。
    * 后端没下发任何一条时是 `DEFAULT_CARRIER_NAMES` 那个常量本身（引用稳定）。

@@ -4,31 +4,46 @@ import {
   getLocalThemeSettings,
   subscribeLocalThemeSettings,
 } from "@/services/themeSettingsStore";
-import { normalizeThemeSettings, type ResolvedThemeSettings } from "@/utils/themeSettings";
+import {
+  normalizeThemeSettings,
+  withPreferredAppearance,
+  type Appearance,
+  type ResolvedThemeSettings,
+} from "@/utils/themeSettings";
 
 type RawThemeSettings = Parameters<typeof normalizeThemeSettings>[0];
 
 let cachedRemote: RawThemeSettings = undefined;
 let cachedLocal: Record<string, unknown> | null = null;
+let cachedPreferred: Appearance | undefined = undefined;
 let cachedResolved: ResolvedThemeSettings | null = null;
 
 /**
  * 后端 `theme_options` 作为站点级预设，本地存储作为访客自己的覆盖。
- * 两者都没设置的键落到主题默认值。
+ * 两者都没设置的键落到主题默认值；默认外观例外，先垫一层后台「默认外观」（`preferred_theme`）。
  */
 function getResolvedThemeSettings(
   remote: RawThemeSettings,
   local: Record<string, unknown>,
+  preferred: Appearance | undefined,
 ): ResolvedThemeSettings {
-  if (cachedResolved && remote === cachedRemote && local === cachedLocal) {
+  if (
+    cachedResolved &&
+    remote === cachedRemote &&
+    local === cachedLocal &&
+    preferred === cachedPreferred
+  ) {
     return cachedResolved;
   }
   cachedRemote = remote;
   cachedLocal = local;
-  cachedResolved = normalizeThemeSettings({
-    ...(remote ?? {}),
-    ...local,
-  } as RawThemeSettings);
+  cachedPreferred = preferred;
+  cachedResolved = normalizeThemeSettings(
+    withPreferredAppearance(preferred, {
+      ...(remote ?? {}),
+      ...local,
+    }) as RawThemeSettings,
+  );
   return cachedResolved;
 }
 
@@ -54,11 +69,19 @@ export function useThemeSettings(): ThemeSettingsState {
   const isReady = hasConfig || isError;
   return useMemo(
     () => ({
-      ...getResolvedThemeSettings(config?.theme_settings, local),
+      ...getResolvedThemeSettings(config?.theme_settings, local, config?.preferredAppearance),
       isReady,
       isLoading: isLoading && !hasConfig,
       isError,
     }),
-    [config?.theme_settings, hasConfig, isError, isLoading, isReady, local],
+    [
+      config?.preferredAppearance,
+      config?.theme_settings,
+      hasConfig,
+      isError,
+      isLoading,
+      isReady,
+      local,
+    ],
   );
 }

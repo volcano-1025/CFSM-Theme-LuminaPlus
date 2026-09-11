@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createWsConnection, type WsSample } from "@/services/cfsm/wsClient";
+import { buildWsUrl, createWsConnection, type WsSample } from "@/services/cfsm/wsClient";
 
 class FakeSocket {
   static instances: FakeSocket[] = [];
@@ -175,5 +175,26 @@ describe("createWsConnection", () => {
     vi.advanceTimersByTime(60_000);
 
     expect(FakeSocket.instances).toHaveLength(1);
+  });
+});
+
+describe("buildWsUrl", () => {
+  it("adds the JWT only for a cross-origin wss connection (private static deployments)", () => {
+    expect(buildWsUrl("https://status.example.com", "jwt", "theme.github.io")).toBe(
+      "wss://status.example.com/api/ws?subscribe=all&token=jwt",
+    );
+  });
+
+  it("leaves it out on the same host, over plain ws, or without a token", () => {
+    // 同域靠 cfsm_auth Cookie；明文 ws 上带 token 会把登录凭证暴露在链路和日志里。
+    expect(buildWsUrl("https://status.example.com", "jwt", "status.example.com")).toBe(
+      "wss://status.example.com/api/ws?subscribe=all",
+    );
+    expect(buildWsUrl("http://127.0.0.1:8787", "jwt", "localhost:5173")).toBe(
+      "ws://127.0.0.1:8787/api/ws?subscribe=all",
+    );
+    expect(buildWsUrl("https://status.example.com", "", "theme.github.io")).toBe(
+      "wss://status.example.com/api/ws?subscribe=all",
+    );
   });
 });

@@ -145,6 +145,82 @@ body::after {
   transform: scale(0.96);
 }
 
+/* 「实时连接已达到时限」提示（RealtimeSessionPrompt）：贴底居中的浮条，不挡页面。按钮沿用 control-button，
+   主操作用强调色描边 + 淡染（与设置页分段控件选中态同一语言）。 */
+.realtime-session-prompt {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 1.5rem);
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text-primary);
+  transform: translateX(-50%);
+}
+
+.realtime-session-prompt-icon {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.realtime-session-prompt-body {
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.realtime-session-prompt-body strong {
+  display: block;
+  font-weight: 650;
+}
+
+.realtime-session-prompt-body p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.realtime-session-prompt-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.realtime-session-prompt-button {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+.realtime-session-prompt-button.is-primary {
+  border-color: color-mix(in srgb, var(--accent-500) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent-500) 12%, var(--surface-a));
+  color: var(--text-primary);
+}
+
+@media (max-width: 560px) {
+  .realtime-session-prompt {
+    flex-wrap: wrap;
+    width: calc(100vw - 1.5rem);
+  }
+
+  .realtime-session-prompt-body {
+    flex: 1 1 0;
+  }
+
+  .realtime-session-prompt-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
 /* 普通页面只处理页面边距与 iOS PWA 安全区，不为首页专属悬浮卡留空。 */
 .app-main {
   --app-gutter: 0.75rem;
@@ -349,6 +425,23 @@ body::after {
   border: 1px solid var(--surface);
   border-radius: 999px;
   background: var(--status-offline);
+}
+
+/* 有新版本（只给登录站长，见 useVersionInfo）：管理按钮上的小点，收起时挂在展开箭头上。
+   用强调色而不是同步异常那种红，免得看起来像出了故障。 */
+.floating-controls-admin {
+  position: relative;
+}
+
+.floating-controls-update-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--surface);
+  border-radius: 999px;
+  background: var(--accent-500);
 }
 
 /* 悬浮控制卡里的"卡片配色"取色面板 */

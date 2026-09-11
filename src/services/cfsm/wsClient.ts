@@ -1,4 +1,4 @@
-import { toWebSocketBase } from "@/services/cfsm/config";
+import { getJwtToken, toWebSocketBase } from "@/services/cfsm/config";
 
 /**
  * `/api/ws` 实时推送客户端。
@@ -80,6 +80,20 @@ function extractSamples(message: unknown): WsSample[] {
 }
 
 /**
+ * `/api/ws` 的连接地址。私有站点里：同域靠登录后的 `cfsm_auth` Cookie；跨域（纯静态部署的主题）时
+ * 浏览器原生 WebSocket 带不了 Authorization 头，只能把 JWT 放进查询参数 `token`（后端文档第 3 节）。
+ * token 会进访问日志，所以只在 wss 上、且确实跨域时才带。
+ */
+export function buildWsUrl(base: string, token: string, pageHost: string): string {
+  const url = new URL(`${toWebSocketBase(base)}/api/ws`);
+  url.searchParams.set("subscribe", "all");
+  if (token && url.protocol === "wss:" && url.host !== pageHost) {
+    url.searchParams.set("token", token);
+  }
+  return url.toString();
+}
+
+/**
  * 维持一条到指定后端的 WebSocket。断线自动指数退避重连；
  * 被 1008 关闭时停止重连并通知调用方降级。
  */
@@ -88,7 +102,6 @@ export function createWsConnection(
   initialIds: string[],
   handlers: WsClientHandlers,
 ): WsConnection {
-  const url = `${toWebSocketBase(base)}/api/ws?subscribe=all`;
   let ids = sanitizeIds(initialIds);
   let socket: WebSocket | null = null;
   let pingTimer: number | null = null;
@@ -135,7 +148,8 @@ export function createWsConnection(
   function connect() {
     if (closed) return;
     try {
-      socket = new WebSocket(url);
+      // 每次（重）连都现算地址：期间可能登录 / 退出过，token 要跟着变。
+      socket = new WebSocket(buildWsUrl(base, getJwtToken(), window.location.host));
     } catch {
       setAvailable(false);
       scheduleReconnect();

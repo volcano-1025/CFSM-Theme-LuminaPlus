@@ -11,7 +11,7 @@ import {
   buildPingTimeRangeOptions,
 } from "@/components/instance/chartShared";
 import { useAuth } from "@/hooks/useAuth";
-import { useNodeMeta, useNodeStoreStatus } from "@/hooks/useNode";
+import { useNodeMeta, useNodeStoreStatus, useRealtimeFocus } from "@/hooks/useNode";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { ANONYMOUS_MAX_HISTORY_HOURS } from "@/services/api";
 
@@ -53,6 +53,8 @@ export function Instance() {
   const themeSettings = useThemeSettings();
   const meta = useNodeMeta(uuid ?? "");
   const storeStatus = useNodeStoreStatus(Boolean(uuid));
+  // 详情页只订阅这一台的实时推送（后端文档：详情页不要订阅全量再在前端过滤）。
+  useRealtimeFocus(uuid);
   const [chartType, setChartType] = useState<"load" | "ping">("load");
   const [loadHours, setLoadHours] = useState(0);
   const [pingHours, setPingHours] = useState(DEFAULT_PING_HOURS);

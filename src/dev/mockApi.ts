@@ -358,10 +358,16 @@ export function installDevMockApi() {
       });
 
     if (url.pathname === "/api/config") {
+      // 本地验「登录站长才看得到的东西」（版本更新提醒等）：localStorage 里放任意 jwt_token 就当已登录。
+      // 真后端也是这样：最新版本号只对登录请求下发。
+      const loggedIn = Boolean(window.localStorage.getItem("jwt_token"));
       return json({
-        version: "2.7.12 Beta",
+        version: "2.8.5 Beta5",
+        ...(loggedIn ? { last_workers_version: "2.8.6", last_agent_version: "1.0.3" } : {}),
         is_public: true,
-        authorization: false,
+        authorization: loggedIn,
+        preferred_theme: "auto",
+        frontend_ws_timeout_minutes: 0,
         turnstile_enabled: false,
         turnstile_login_enabled: false,
         turnstile_site_key: "",

@@ -6,6 +6,7 @@ import {
   DEFAULT_CARRIER_NAMES,
   resolveCarrierNames,
   parseLatencyWindow,
+  PING_TIMEOUT_VALUE,
   historyRowToLoadRecord,
   historyRowsToPingRecords,
   inferIntervalSeconds,
@@ -218,6 +219,18 @@ describe("toNodeMetrics", () => {
 
     expect(next.ping).toBe(previous.ping);
   });
+
+  it("reads the backend's full timeout (ping null + loss 100) as a failed probe, not as no data", () => {
+    // 后端 2026-09-07 起：false = 没配置（不显示），null + 丢包 100 = 这一轮全超时。
+    const metrics = toNodeMetrics(
+      server({ ping_ct: null, loss_ct: 100, ping_cu: false, loss_cu: false, ping_cm: 0, loss_cm: 0 }),
+      NOW,
+    );
+    expect([metrics.ping.ct, metrics.ping.lossCt]).toEqual([PING_TIMEOUT_VALUE, 100]);
+    expect([metrics.ping.cu, metrics.ping.lossCu]).toEqual([null, null]);
+    // 0 ms / 0% 是有效数据，不能被当成超时或没数据。
+    expect([metrics.ping.cm, metrics.ping.lossCm]).toEqual([0, 0]);
+  });
 });
 
 describe("mergeServerPatch", () => {
@@ -248,6 +261,12 @@ describe("mergeServerPatch", () => {
   it("accepts a null ping value as a real measurement gap", () => {
     const merged = mergeServerPatch(server(), { ping_ct: null }, NOW + 1_000);
     expect(merged.ping_ct).toBeNull();
+  });
+
+  it("normalises the four extra lines too, so a repeated `false` does not churn a new object", () => {
+    const once = mergeServerPatch(server(), { ping_node_1: false, loss_node_1: false }, NOW + 1_000);
+    expect(once.ping_node_1).toBeNull();
+    expect(mergeServerPatch(once, { ping_node_1: false, loss_node_1: false }, NOW + 1_000)).toBe(once);
   });
 });
 
@@ -315,8 +334,32 @@ describe("history conversion", () => {
   it("emits one ping record per measured carrier", () => {
     const records = historyRowsToPingRecords([row], "node-a");
 
-    expect(records.map((record) => record.task_id)).toEqual([1, 3]);
+    // 电信、移动有值；联通 null 且没有丢包 = 没取样，不产出；BD 的负值是探测失败，要产出（图表靠它画断点）。
+    expect(records.map((record) => record.task_id)).toEqual([1, 3, 4]);
     expect(records[1]).toMatchObject({ value: 30, loss: 50, client: "node-a" });
+    expect(records[2]).toMatchObject({ value: -1, loss: null });
+  });
+
+  it("keeps a timed-out round (ping null + loss 100) and still drops lines marked false", () => {
+    const records = historyRowsToPingRecords(
+      [
+        HistoryRowSchema.parse({
+          timestamp: NOW,
+          ping_ct: null,
+          loss_ct: 100,
+          ping_cu: false,
+          loss_cu: false,
+          ping_cm: 31,
+          loss_cm: 0,
+        }),
+      ],
+      "node-a",
+    );
+
+    expect(records.map((record) => [record.task_id, record.value, record.loss])).toEqual([
+      [1, PING_TIMEOUT_VALUE, 100],
+      [3, 31, 0],
+    ]);
   });
 
   it("names the eight carrier tasks", () => {
@@ -341,6 +384,18 @@ describe("history conversion", () => {
     expect(window[0]?.ping.node_4).toBe(34);
     expect(window[0]?.ping.lossNode1).toBe(5);
     expect(window[0]?.ping.node_2).toBeNull();
+  });
+
+  it("reads a timed-out window slot as a timeout, not as a missing value", () => {
+    const window = parseLatencyWindow(
+      server({
+        ping: [{ ts: NOW, ct: null, cu: false, cm: 28 }],
+        loss: [{ ts: NOW, ct: 100, cu: false, cm: 0 }],
+      }),
+    );
+    expect([window[0]?.ping.ct, window[0]?.ping.lossCt]).toEqual([PING_TIMEOUT_VALUE, 100]);
+    expect(window[0]?.ping.cu).toBeNull();
+    expect(window[0]?.ping.cm).toBe(28);
   });
 
   it("uses the site's custom carrier names when given", () => {
@@ -414,7 +469,8 @@ describe("parseLatencyWindow", () => {
         lossBd: 0,
       },
     });
-    expect(window[1]?.ping.cm).toBeNull();
+    // 延迟 null + 丢包 100 = 这一轮全超时（后端 2026-09-07 口径），读成超时而不是「没数据」。
+    expect(window[1]?.ping.cm).toBe(PING_TIMEOUT_VALUE);
     expect(window[1]?.ping.lossCm).toBe(100);
   });
 

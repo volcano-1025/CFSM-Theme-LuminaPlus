@@ -35,13 +35,13 @@ function devHostAssets(): Plugin {
 /**
  * 把主题版本写进产物的 `<meta name="theme-version">`。
  *
- * 两个用处：出问题时能直接看页面源码确认线上跑的是哪一版（Workers 对分支地址有约一小时
- * 缓存，很容易看到旧包）；版本号一改产物就变，CI 才会把这一版连同更新日志发到产物分支。
+ * 三个用处：出问题时能直接看页面源码确认线上跑的是哪一版（Workers 对分支地址有约一小时
+ * 缓存，很容易看到旧包）；版本号一改产物就变，CI 才会把这一版连同更新日志发到产物分支；
+ * 页脚的主题版本号与「有新版本」比对也读它（见 services/versionCheck）。dev 下同样写入，本地才看得到版本号。
  */
 function themeVersionMeta(version: string): Plugin {
   return {
     name: "cfsm-theme-version",
-    apply: "build",
     transformIndexHtml(html) {
       return html.replace(
         "</head>",

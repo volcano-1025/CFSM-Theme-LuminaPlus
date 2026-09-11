@@ -429,14 +429,16 @@ describe("getPingRecords", () => {
     expect(stats?.find((stat) => stat.taskId === 1)?.avg).toBe(23);
   });
 
-  it("skips carriers with no measurement", async () => {
+  it("skips carriers with no measurement, but keeps failed probes", async () => {
     fetchMock.mockImplementation(
       jsonReply([historyRow({ ping_cu: null, ping_bd: -1 })]),
     );
 
     const { records } = await getPingRecords("node-a", 6);
 
-    expect(records.map((record) => record.task_id)).toEqual([1, 3]);
+    // 联通 null 且丢包不是正数 = 没取样，跳过；BD 负值 = 探测失败，要留着（图表靠它画断点、算丢包）。
+    expect(records.map((record) => record.task_id)).toEqual([1, 3, 4]);
+    expect(records.find((record) => record.task_id === 4)?.value).toBe(-1);
   });
 
   it("drops lines the backend marks as unconfigured with false, new ones included", async () => {

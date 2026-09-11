@@ -34,3 +34,28 @@
   color: var(--text-primary);
   border-bottom-color: currentColor;
 }
+
+/* 版本号跟在名字后面，比名字淡一档。 */
+.site-footer-version {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「新版 vX」：只给登录站长（见 SiteFooter）。强调色描边 + 淡染，与设置页选中态同一语言。 */
+.site-footer-update {
+  margin-left: 6px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-500) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-500) 12%, transparent);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 140ms ease;
+}
+
+.site-footer-update:hover,
+.site-footer-update:focus-visible {
+  border-color: var(--accent-500);
+}

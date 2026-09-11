@@ -125,6 +125,14 @@ function hasAnyValue(ping: CarrierPingSnapshot): boolean {
   return CARRIER_KEYS.some((key) => ping[key] != null);
 }
 
+/** 这一刻有没有哪条线路整轮超时（负值，见 mappers 的 PING_TIMEOUT_VALUE）。 */
+function hasTimeout(ping: CarrierPingSnapshot): boolean {
+  return CARRIER_KEYS.some((key) => {
+    const value = ping[key];
+    return value != null && value < 0;
+  });
+}
+
 function isFresh(sample: PingLiveSample, now: number): boolean {
   return sample.time > 0 && now - sample.time <= SAMPLE_TTL_MS;
 }
@@ -500,6 +508,9 @@ function sameSeries(a: readonly PingLiveSample[], b: readonly PingLiveSample[]):
  *
  * 整段丢掉而不是「保留一格」：复制源可能在这段的任意一端，留哪一格都是猜。真值那一格在
  * 相邻的非重复段里本来就还在。
+ *
+ * **含整轮超时的段不丢**：持续断网时每一格都是「延迟超时、丢包 100」，逐字节相同却是真实数据；
+ * 当复印件丢掉的话，一段断网在首页上是一片空白而不是一排红格。
  */
 function dropBackfilledRuns(
   window: readonly PingLiveSample[],
@@ -513,7 +524,7 @@ function dropBackfilledRuns(
       index < window.length && samePing(window[index]!.ping, window[runStart]!.ping);
     if (same) continue;
     const runLength = index - runStart;
-    if (runLength < BACKFILL_RUN_MIN_LENGTH) {
+    if (runLength < BACKFILL_RUN_MIN_LENGTH || hasTimeout(window[runStart]!.ping)) {
       for (let i = runStart; i < index; i += 1) kept.push(window[i]!);
     }
     runStart = index;

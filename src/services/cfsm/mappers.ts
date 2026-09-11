@@ -130,6 +130,26 @@ function toNullableNumber(value: unknown): number | null {
 }
 
 /**
+ * 一整轮探测全部超时时记下的延迟值。沿用主题一直以来「负值 = 这次探测失败」的约定：
+ * `resolvePingSampleCounts`、首页柱子与详情页图表都按它算丢包、画断点，不另起一套。
+ */
+export const PING_TIMEOUT_VALUE = -1;
+
+/**
+ * 一条线路一轮探测的延迟。
+ *
+ * 后端 2026-09-07 起的口径（theme-develop.md 末尾）：`false` / 字段缺失 = 没配置、没上报或没取样，
+ * 不显示；`ping: null` 加上有数值的丢包（全超时时是 100）= 这一轮全部超时。两者经 toNullableNumber
+ * 都读成 null 的话，超时就被当成「没数据」：首页那格留空而不是涂红、卡片丢包率偏低、详情页丢包带
+ * 看不到（官方前端 2026-09-08 的 fba07dc 修的是同一类问题）。所以延迟读不出数时要看同一轮的丢包。
+ */
+function probeLatency(ping: unknown, loss: number | null): number | null {
+  const value = toNullableNumber(ping);
+  if (value != null) return value;
+  return loss != null && loss > 0 ? PING_TIMEOUT_VALUE : null;
+}
+
+/**
  * 秒级或毫秒级时间戳统一成毫秒。
  *
  * 字符串只有整体是数字时才按时间戳解析：`"2026-07-16T00:00:00Z"` 被 parseFloat 读成 2026，
@@ -321,8 +341,9 @@ export function toNodeInfo(server: CfsmServer): NodeInfo {
 function carrierPingFrom(row: Record<string, unknown>): CarrierPingSnapshot {
   const ping = { ...EMPTY_CARRIER_PING };
   for (const task of CARRIER_TASKS) {
-    ping[task.key] = toNullableNumber(row[task.field]);
-    ping[CARRIER_LOSS_KEYS[task.key]] = toNullableNumber(row[task.lossField]);
+    const loss = toNullableNumber(row[task.lossField]);
+    ping[task.key] = probeLatency(row[task.field], loss);
+    ping[CARRIER_LOSS_KEYS[task.key]] = loss;
   }
   return ping;
 }
@@ -356,8 +377,10 @@ export function parseLatencyWindow(server: CfsmServer): PingLiveSample[] {
     const ping = { ...EMPTY_CARRIER_PING };
     for (const key of CARRIER_KEYS) {
       // 窗口点里的键和 CARRIER_KEYS 同名（ct/cu/cm/bd/node_1..4）；老后端没有的读成 null。
-      ping[key] = toNullableNumber(point[key]);
-      ping[CARRIER_LOSS_KEYS[key]] = loss ? toNullableNumber(loss[key]) : null;
+      const lossValue = loss ? toNullableNumber(loss[key]) : null;
+      // 超时那一格 ping 是 null、loss 是 100：要读成超时，见 probeLatency。
+      ping[key] = probeLatency(point[key], lossValue);
+      ping[CARRIER_LOSS_KEYS[key]] = lossValue;
     }
     out.push({ time, ping });
   }
@@ -497,16 +520,11 @@ const NUMERIC_PATCH_FIELDS = new Set([
   "report_interval",
 ]);
 
-const NULLABLE_NUMERIC_PATCH_FIELDS = new Set([
-  "ping_ct",
-  "ping_cu",
-  "ping_cm",
-  "ping_bd",
-  "loss_ct",
-  "loss_cu",
-  "loss_cm",
-  "loss_bd",
-]);
+// 从线路表推导：手写时只列了前四条，后四条（ping_node_* / loss_node_*）的 `false` 会原样进合并结果，
+// 和上一份解析好的 null 一比永远「不相等」，每帧都白生成一个新对象。
+const NULLABLE_NUMERIC_PATCH_FIELDS = new Set<string>(
+  CARRIER_TASKS.flatMap((task) => [task.field, task.lossField]),
+);
 
 /**
  * 把一条增量样本合并进已知的服务器状态。
@@ -587,22 +605,26 @@ export function historyRowToLoadRecord(row: HistoryRow, client: string): LoadRec
   };
 }
 
-/** 历史行 → 四条线路的 ping 记录；缺测的线路不产出点。 */
+/**
+ * 历史行 → 各线路的 ping 记录。没配置 / 没取样的线路不产出点；**整轮超时要产出**
+ * （值是 PING_TIMEOUT_VALUE）—— 图表靠它画断点、丢包带靠它涂红，跳过的话超时在详情页上就消失了。
+ */
 export function historyRowsToPingRecords(rows: HistoryRow[], client: string): PingRecord[] {
   const out: PingRecord[] = [];
   for (const row of rows) {
     const time = normalizeTimestamp(row.timestamp);
     if (time <= 0) continue;
     for (const task of CARRIER_TASKS) {
-      const value = toNullableNumber(row[task.field]);
-      if (value == null || value < 0) continue;
+      const loss = toNullableNumber(row[task.lossField]);
+      const value = probeLatency(row[task.field], loss);
+      if (value == null) continue;
       out.push({
         task_id: task.id,
         time,
         value,
         client,
         count: 1,
-        loss: toNullableNumber(row[task.lossField]),
+        loss,
       });
     }
   }
