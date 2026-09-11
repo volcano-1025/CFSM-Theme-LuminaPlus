@@ -6,9 +6,7 @@ import { useViewMode } from "@/hooks/useViewMode";
 import { useNodeStoreStatus } from "@/hooks/useNode";
 import { useAuth } from "@/hooks/useAuth";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
-import { useVersionInfo } from "@/hooks/useVersionInfo";
 import type { PingHistoryRefreshState } from "@/hooks/usePingHistoryRefresh";
-import { formatVersionLabel } from "@/utils/versionCompare";
 import { getAdminUrl } from "@/services/cfsm/config";
 import type { NodeViewMode } from "@/utils/themeSettings";
 import { clsx } from "clsx";
@@ -107,16 +105,6 @@ export function FloatingControls({
   const showThemeManage = settingsReady;
   const showColorPicker = settingsReady;
   const showSyncWarning = failureStreak >= 2;
-  // 有新版本且站长还没点开过：管理按钮上亮个点，收起时挂在展开箭头上（同步异常的红点优先）。
-  // 只有登录站长才会有 update，见 useVersionInfo。
-  const versionInfo = useVersionInfo();
-  const showUpdateDot = showAdmin && versionInfo.hasUnseenUpdate;
-  const updateHint = [
-    versionInfo.backend.update && `后端 ${formatVersionLabel(versionInfo.backend.update)}`,
-    versionInfo.theme.update && `主题 ${formatVersionLabel(versionInfo.theme.update)}`,
-  ]
-    .filter(Boolean)
-    .join("、");
   const hiddenTabIndex = collapsed ? -1 : undefined;
   const ToggleIcon = collapsed ? ChevronLeft : ChevronRight;
   const ViewIcon = VIEW_MODE_META[nextMode].icon;
@@ -225,26 +213,12 @@ export function FloatingControls({
             {showAdmin && (
               <a
                 href={getAdminUrl()}
-                aria-label={
-                  showUpdateDot
-                    ? `管理（有新版本：${updateHint}）`
-                    : me?.logged_in
-                      ? "管理"
-                      : "后台登录"
-                }
-                title={
-                  showUpdateDot
-                    ? `管理 · 有新版本：${updateHint}`
-                    : me?.logged_in
-                      ? "管理"
-                      : "后台登录"
-                }
+                aria-label={me?.logged_in ? "管理" : "后台登录"}
+                title={me?.logged_in ? "管理" : "后台登录"}
                 tabIndex={hiddenTabIndex}
-                className="control-button floating-controls-admin grid h-9 w-9 place-items-center"
-                onClick={versionInfo.markSeen}
+                className="control-button grid h-9 w-9 place-items-center"
               >
                 <Settings size={16} />
-                {showUpdateDot && <span className="floating-controls-update-dot" aria-hidden />}
               </a>
             )}
           </div>
@@ -283,20 +257,11 @@ export function FloatingControls({
             aria-label={collapsed ? "展开快捷按钮" : "收起快捷按钮"}
             aria-expanded={!collapsed}
             onClick={toggleControls}
-            title={
-              collapsed
-                ? showUpdateDot
-                  ? `展开快捷按钮 · 有新版本：${updateHint}`
-                  : "展开快捷按钮"
-                : "收起快捷按钮"
-            }
+            title={collapsed ? "展开快捷按钮" : "收起快捷按钮"}
           >
             <ToggleIcon size={16} />
             {showSyncWarning && collapsed && (
               <span className="floating-controls-warning-dot" aria-hidden />
-            )}
-            {!showSyncWarning && showUpdateDot && collapsed && (
-              <span className="floating-controls-update-dot" aria-hidden />
             )}
           </button>
         </div>

@@ -73,21 +73,3 @@ describe("fetchLatestThemeVersion", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
-
-describe("seen update versions", () => {
-  it("persists what the owner already saw and notifies subscribers once per change", async () => {
-    const module = await loadModule();
-    let calls = 0;
-    const unsubscribe = module.subscribeSeenUpdateVersions(() => {
-      calls += 1;
-    });
-
-    module.markUpdateVersionsSeen({ backend: "2.8.6", theme: "1.2.16" });
-    module.markUpdateVersionsSeen({ backend: "2.8.6", theme: "1.2.16" });
-    unsubscribe();
-
-    expect(calls).toBe(1);
-    const reloaded = await loadModule();
-    expect(reloaded.getSeenUpdateVersions()).toEqual({ backend: "2.8.6", theme: "1.2.16" });
-  });
-});

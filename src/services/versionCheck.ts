@@ -1,7 +1,7 @@
 import { fetchWithTimeout } from "@/utils/abort";
 
 /**
- * 版本号与「有新版本」提醒的数据来源。
+ * 版本号与「有新版本」提醒的数据来源（只用在页脚，见 SiteFooter）。
  *
  * - 后端：`/api/config` 的 `version`；最新版 `last_workers_version` **只在登录后下发**
  *   （后端文档：自定义主题不要依赖匿名请求展示升级提示），所以提醒只给登录站长看。
@@ -18,7 +18,6 @@ const LATEST_THEME_CACHE_KEY = "cfsm-luminaplus:theme-latest-version";
 const LATEST_THEME_TTL_MS = 12 * 60 * 60 * 1000;
 const LATEST_THEME_FAILURE_TTL_MS = 60 * 60 * 1000;
 const LATEST_THEME_TIMEOUT_MS = 8_000;
-const SEEN_UPDATES_KEY = "cfsm-luminaplus:update-notice-seen";
 
 /** `LuminaPlus v1.2.15` → `1.2.15`；读不出返回 null。 */
 export function parseThemeVersionMeta(content: unknown): string | null {
@@ -27,7 +26,7 @@ export function parseThemeVersionMeta(content: unknown): string | null {
   return match ? match[1]! : null;
 }
 
-/** 当前主题版本（页面里的 theme-version meta）。开发环境或被裁掉时是 null。 */
+/** 当前主题版本（页面里的 theme-version meta）。被裁掉时是 null。 */
 export function readCurrentThemeVersion(doc: Document = document): string | null {
   return parseThemeVersionMeta(
     doc.querySelector<HTMLMetaElement>('meta[name="theme-version"]')?.content,
@@ -94,49 +93,4 @@ export async function fetchLatestThemeVersion(now = Date.now()): Promise<string 
   const entry = { checkedAt: now, version: version ?? cached?.version ?? null, ok };
   writeCachedLatest(entry);
   return entry.version;
-}
-
-/* ---- 站长点开过提醒之后，同一个新版本不再亮红点 ---- */
-
-export interface SeenUpdateVersions {
-  backend?: string;
-  theme?: string;
-}
-
-const EMPTY_SEEN: SeenUpdateVersions = Object.freeze({});
-const seenListeners = new Set<() => void>();
-let seenCache: SeenUpdateVersions | null = null;
-
-export function getSeenUpdateVersions(): SeenUpdateVersions {
-  if (seenCache) return seenCache;
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(SEEN_UPDATES_KEY) ?? "null");
-    const entry = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-    seenCache = {
-      ...(typeof entry.backend === "string" ? { backend: entry.backend } : {}),
-      ...(typeof entry.theme === "string" ? { theme: entry.theme } : {}),
-    };
-  } catch {
-    seenCache = EMPTY_SEEN;
-  }
-  return seenCache;
-}
-
-export function markUpdateVersionsSeen(next: SeenUpdateVersions): void {
-  const current = getSeenUpdateVersions();
-  if (current.backend === next.backend && current.theme === next.theme) return;
-  seenCache = { ...next };
-  try {
-    window.localStorage.setItem(SEEN_UPDATES_KEY, JSON.stringify(seenCache));
-  } catch {
-    // 同上。
-  }
-  for (const listener of seenListeners) listener();
-}
-
-export function subscribeSeenUpdateVersions(listener: () => void): () => void {
-  seenListeners.add(listener);
-  return () => {
-    seenListeners.delete(listener);
-  };
 }

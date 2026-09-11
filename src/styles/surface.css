@@ -426,24 +426,6 @@ body::after {
   border-radius: 999px;
   background: var(--status-offline);
 }
-
-/* 有新版本（只给登录站长，见 useVersionInfo）：管理按钮上的小点，收起时挂在展开箭头上。
-   用强调色而不是同步异常那种红，免得看起来像出了故障。 */
-.floating-controls-admin {
-  position: relative;
-}
-
-.floating-controls-update-dot {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--surface);
-  border-radius: 999px;
-  background: var(--accent-500);
-}
-
 /* 悬浮控制卡里的"卡片配色"取色面板 */
 .metric-color-picker {
   align-self: flex-end;
