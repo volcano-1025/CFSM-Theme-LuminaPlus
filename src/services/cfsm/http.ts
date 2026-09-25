@@ -85,32 +85,20 @@ function captureTurnstileVerified(payload: unknown): void {
 }
 
 /**
- * 单个后端的 GET。成功响应直接是业务对象（没有 `{status,data}` 包装），
- * 失败响应是 `{ error, code }`。
+ * GET / POST 共用的响应处理：失败抛 ApiRequestError（调用方据 status 提示），成功按 schema 校验。
+ *
+ * - 401：令牌过期，清掉。读请求之后以访客身份继续，写请求由调用方提示重新登录；不做跳转 —— 主题不接管登录。
+ * - 403：Turnstile 凭证失效，清掉，全局 TurnstileGate 会在下次拉 config 时重新弹验证。
  */
-export async function cfsmGet<S extends z.ZodTypeAny>(
+async function readResponse<S extends z.ZodTypeAny>(
+  resp: Response,
   path: string,
   schema: S,
-  options?: RequestOptions,
 ): Promise<z.output<S>> {
-  const base = options?.base ?? getPrimaryApiBase();
-  const url = `${base}${path}`;
-  const resp = await fetchWithTimeout(
-    url,
-    { credentials: "include", headers: buildHeaders() },
-    options?.timeout ?? DEFAULT_API_TIMEOUT_MS,
-    options?.signal,
-  );
-
   if (!resp.ok) {
     const body = await readErrorBody(resp);
-    if (resp.status === 401) {
-      // 令牌过期后清掉，让后续请求以访客身份继续；不做跳转 —— 主题不接管登录。
-      clearJwtToken();
-    }
-    if (resp.status === 403) {
-      clearTurnstileCredentials();
-    }
+    if (resp.status === 401) clearJwtToken();
+    if (resp.status === 403) clearTurnstileCredentials();
     if (resp.status === 409 || body?.message === "databaseUpgradeRequired") {
       throw new DatabaseUpgradeRequiredError(path);
     }
@@ -136,9 +124,30 @@ export async function cfsmGet<S extends z.ZodTypeAny>(
 }
 
 /**
+ * 单个后端的 GET。成功响应直接是业务对象（没有 `{status,data}` 包装），
+ * 失败响应是 `{ error, code }`。
+ */
+export async function cfsmGet<S extends z.ZodTypeAny>(
+  path: string,
+  schema: S,
+  options?: RequestOptions,
+): Promise<z.output<S>> {
+  const base = options?.base ?? getPrimaryApiBase();
+  const url = `${base}${path}`;
+  const resp = await fetchWithTimeout(
+    url,
+    { credentials: "include", headers: buildHeaders() },
+    options?.timeout ?? DEFAULT_API_TIMEOUT_MS,
+    options?.signal,
+  );
+
+  return readResponse(resp, path, schema);
+}
+
+/**
  * 单个后端的 POST。目前唯一的写入口是第三方主题保存自身配置（`POST /api/theme_options`，
  * 仅登录站长可用）—— 与 GET 共用鉴权头（Bearer JWT + Turnstile），额外带 JSON body。
- * 401 清 JWT、403 清 Turnstile 凭证的处理与 cfsmGet 一致，调用方据 status 提示。
+ * 错误处理与 cfsmGet 共用（readResponse）。
  */
 export async function cfsmPost<S extends z.ZodTypeAny>(
   path: string,
@@ -160,38 +169,7 @@ export async function cfsmPost<S extends z.ZodTypeAny>(
     options?.signal,
   );
 
-  if (!resp.ok) {
-    const errorBody = await readErrorBody(resp);
-    if (resp.status === 401) {
-      // 令牌过期：清掉，让调用方提示重新登录（写操作没有匿名降级一说）。
-      clearJwtToken();
-    }
-    if (resp.status === 403) {
-      // Turnstile 凭证失效：清掉，全局 TurnstileGate 会在下次拉 config 时重新弹验证。
-      clearTurnstileCredentials();
-    }
-    if (resp.status === 409 || errorBody?.message === "databaseUpgradeRequired") {
-      throw new DatabaseUpgradeRequiredError(path);
-    }
-    const code = Number(errorBody?.code);
-    throw new ApiRequestError(
-      errorBody?.error || errorBody?.message || `Request ${path} failed: ${resp.status}`,
-      resp.status,
-      path,
-      Number.isFinite(code) && code > 0 ? code : resp.status,
-    );
-  }
-
-  const json = (await resp.json()) as unknown;
-  captureTurnstileVerified(json);
-
-  const parsed = schema.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(
-      `Schema mismatch on ${path}: ${parsed.error.issues[0]?.message ?? "unknown"}`,
-    );
-  }
-  return parsed.data;
+  return readResponse(resp, path, schema);
 }
 
 export interface MultiBaseResult<T> {

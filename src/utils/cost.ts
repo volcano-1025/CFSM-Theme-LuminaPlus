@@ -141,9 +141,17 @@ function parseAcquiredTimestamp(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * 「不能是未来」按查看者的本地日期判，要给时区差留余量：各地的本地日期最多差 2 天（UTC+14 对 UTC−12）。
+ * 不留的话，东八区站长凌晨填的「今天」，在西半球的设备上还是「明天」，归一化时被删掉；那台设备再一同步，
+ * 整份快照写回后端，日期就永久丢了。摊销计算自己会跳过还没到的日期（见 premiumAmortMonths）。
+ */
+const ACQUIRED_AT_TIMEZONE_SLACK_MS = 2 * 24 * 60 * 60 * 1000;
+
 function normalizeAcquiredAt(value: unknown) {
   const raw = typeof value === "string" ? value.trim() : "";
-  return parseLocalDateKey(raw) != null && raw <= localDateKey() ? raw : undefined;
+  const latest = localDateKey(new Date(Date.now() + ACQUIRED_AT_TIMEZONE_SLACK_MS));
+  return parseLocalDateKey(raw) != null && raw <= latest ? raw : undefined;
 }
 
 // 以节点 uuid 为 key。旧版纯数字自动升格为 { amount };非法日期/收购价只丢字段不丢条目;

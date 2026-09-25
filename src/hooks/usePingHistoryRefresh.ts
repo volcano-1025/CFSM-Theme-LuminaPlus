@@ -163,16 +163,18 @@ export function usePingHistoryRefresh(): PingHistoryRefreshState {
 
     void refreshPingHistory(uuids)
       .then((result) => {
-        if (!mountedRef.current) return;
-        setLastResult(result);
         // 一台都没成功就不算「刷新过」——否则提示会变成「上次刷新 23:44，4 台失败」，
         // 读起来像是刷成功了只是有几台掉队。
-        if (result.succeeded > 0) {
-          const at = Date.now();
+        // 落盘不看组件还在不在：刷新途中离开首页，请求照样跑完、数据照样回灌、D1 已经读了，
+        // 不记下来的话回首页再点就不提醒了。
+        const at = result.succeeded > 0 ? Date.now() : null;
+        if (at != null) {
           lastRefreshedAtRef.current = at;
           writeLastRefreshedAt(at);
-          setLastRefreshedAt(at);
         }
+        if (!mountedRef.current) return;
+        setLastResult(result);
+        if (at != null) setLastRefreshedAt(at);
         // 一台都没成功才算失败；部分失败仍然回灌了数据，按成功提示但把数字带出去。
         settle(result.succeeded > 0 ? "done" : "error");
       })

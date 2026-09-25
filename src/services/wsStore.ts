@@ -1149,10 +1149,14 @@ function updateWsSubscriptions(baseByServerId: Map<string, string>) {
   // 后台暂停 / 连接到时限期间不建连接：快照照常合并，实时连接等恢复时由 resumeRealtime 重建。
   if (realtimePaused()) return;
   const idsByBase = new Map<string, string[]>();
+  // 详情页的节点不在快照里（地址里的 ID 已删掉、访客打开了后台隐藏的节点）就当没有焦点：
+  // 按焦点过滤会一台都不剩，所有连接被关掉、计时清零，回首页再重连 —— 正是下面要避免的重置。
+  const focusUuid =
+    realtimeFocusUuid != null && baseByServerId.has(realtimeFocusUuid) ? realtimeFocusUuid : null;
   for (const [serverId, base] of baseByServerId) {
     // 详情页只订阅正在看的这一台，推送量从全站降到一台。在同一条连接上改 ids、不重连，
     // 「单次连接」的计时也就不会因为进出详情页被重置。
-    if (realtimeFocusUuid != null && serverId !== realtimeFocusUuid) continue;
+    if (focusUuid != null && serverId !== focusUuid) continue;
     const ids = idsByBase.get(base) ?? [];
     ids.push(serverId);
     idsByBase.set(base, ids);

@@ -108,6 +108,20 @@ describe("getExpireDaysRemaining / formatExpireDays", () => {
     return new Date(ts).toISOString();
   }
 
+  it("纯日期按本地日历日算：到期前一天不会提前显示「今日」", () => {
+    // 东八区原来的 bug：「2026-09-27」按 UTC 零点 = 北京 9/27 早上 8 点，
+    // 9/26 早上 8 点以后剩不到 24 小时，向下取整成 0。用本地时刻构造，任何时区都成立。
+    const at = (day: number, hour: number, minute = 0) =>
+      new Date(2026, 8, day, hour, minute).getTime();
+    expect(getExpireDaysRemaining("2026-09-27", at(26, 9))).toBe(1);
+    expect(getExpireDaysRemaining("2026-09-27", at(26, 23, 59))).toBe(1);
+    expect(getExpireDaysRemaining("2026-09-27", at(27, 0, 1))).toBe(0);
+    expect(getExpireDaysRemaining("2026-09-27", at(27, 23))).toBe(0);
+    expect(getExpireDaysRemaining("2026-09-27", at(28, 0, 30))).toBe(-1);
+    expect(formatExpireDays("2026-09-27", at(26, 9))).toMatchObject({ value: "1", unit: "天" });
+    expect(formatExpireDays("2026-09-27", at(27, 9))).toMatchObject({ value: "今日" });
+  });
+
   it("returns null for missing / unparseable input", () => {
     expect(getExpireDaysRemaining(null)).toBeNull();
     expect(getExpireDaysRemaining("not-a-date")).toBeNull();

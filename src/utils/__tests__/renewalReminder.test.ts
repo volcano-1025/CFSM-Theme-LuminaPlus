@@ -111,14 +111,12 @@ describe("renewal reminders", () => {
     expect(RENEWAL_SNOOZE_MS).toBe(DAY_MS);
   });
 
-  it("uses the same whole-day rounding as cards and the assets page", () => {
-    const expiresAt = NOW + 3 * DAY_MS - 1;
-    const [reminder] = getRenewalReminders(
-      [node({ expired_at: new Date(expiresAt).toISOString() })],
-      NOW,
-    );
-    expect(reminder.daysRemaining).toBe(2);
-    expect(reminder.daysRemaining).toBe(getExpireDaysRemaining(expiresAt, NOW));
+  it("uses the same calendar-day count as cards and the assets page", () => {
+    // 本地 7 月 12 日上午 9 点，到期日 7 月 15 日：差 3 个日历日，不管在哪个时区跑。
+    const now = new Date(2026, 6, 12, 9, 0).getTime();
+    const [reminder] = getRenewalReminders([node({ expired_at: "2026-07-15" })], now);
+    expect(reminder.daysRemaining).toBe(3);
+    expect(reminder.daysRemaining).toBe(getExpireDaysRemaining("2026-07-15", now));
   });
 
   it("binds dismissal to the exact expiry cycle", () => {

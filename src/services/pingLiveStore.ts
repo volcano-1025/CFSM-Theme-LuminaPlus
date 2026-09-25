@@ -24,9 +24,10 @@ import type { CarrierPingSnapshot } from "@/types/cfsm";
  * 首页给每台节点每分钟查一次会让后端 D1 读行翻几十倍（后端作者实测约 60 倍，
  * 30 秒上报则约 120 倍）。
  *
- * 缓冲区只在内存里：首屏的完整窗口由后端给，本地点只是拿来补窗口的缺口，
- * 没必要跨刷新留着（留着反而会把上次会话的陈旧样本混进来）。超过 {@link SAMPLE_TTL_MS}
- * 的样本读取时丢弃。
+ * 本地实测样本会存进 localStorage（15 秒防抖，关页时立刻存），下次打开读回来接着补缺口；
+ * 后端窗口不存，每次由快照重新下发。超过 {@link SAMPLE_TTL_MS} 的样本读取时丢弃。
+ * 上次会话留下的样本和这次的之间隔着一大段，靠 {@link mergeWindowWithLocal} 的「实测覆盖」
+ * 判定（间隔上限封顶在心跳 2 分钟）挡住，不会把中间那段窗口数据当成已覆盖扔掉。
  */
 
 export interface PingLiveSample {

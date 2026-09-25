@@ -292,6 +292,26 @@ describe("详情页只订阅正在看的这一台", () => {
     release();
     await vi.advanceTimersByTimeAsync(0);
   });
+
+  it("keeps the socket open when the focused node is not in the snapshot", async () => {
+    mocks.getServersSnapshot.mockImplementation(async () => snapshot(["node-a", "node-b"]));
+    const store = await loadStore();
+    const release = store.retainStore();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // 地址里的 ID 已经删掉 / 访客打开了后台隐藏的节点：按焦点过滤会一台不剩。
+    const leave = store.focusRealtimeNode("node-gone");
+    expect(mocks.connections[0]!.closed).toBe(false);
+    expect(mocks.connections[0]!.ids).toEqual(["node-a", "node-b"]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mocks.connections[0]!.closed).toBe(false);
+
+    leave();
+    expect(mocks.connections).toHaveLength(1);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+  });
 });
 
 describe("快照同步", () => {

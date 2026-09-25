@@ -460,6 +460,19 @@ describe("cost helpers", () => {
     });
   });
 
+  it("normalizeCostPremiums 不按查看者时区删掉「今天」：本地明天也留着", () => {
+    // 东八区凌晨填的「今天」，在西半球的设备上是「明天」；删了再一同步就永久丢了。
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const key = [
+      tomorrow.getFullYear(),
+      String(tomorrow.getMonth() + 1).padStart(2, "0"),
+      String(tomorrow.getDate()).padStart(2, "0"),
+    ].join("-");
+    expect(normalizeCostPremiums({ node: { amount: 8, acquiredAt: key } })).toEqual({
+      node: { amount: 8, acquiredAt: key },
+    });
+  });
+
   it("normalizeCostRateApiUrl falls back to the default", () => {
     expect(normalizeCostRateApiUrl("")).toBe(DEFAULT_COST_RATE_API_URL);
     expect(normalizeCostRateApiUrl("  https://x  ")).toBe("https://x");

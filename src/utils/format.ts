@@ -136,13 +136,32 @@ export function resolveExpireTimestamp(
   return ts;
 }
 
+const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** 本地日历上的第几天（本地年月日折成 UTC 天数，夏令时切换那天也不会差一天）。 */
+function localDayIndex(ts: number) {
+  const date = new Date(ts);
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000;
+}
+
+/**
+ * 距到期还有几个日历日：0 = 今天到期，负数 = 已过期几天。
+ *
+ * 后端的到期日是「YYYY-MM-DD」，`Date.parse` 按 UTC 零点算，东八区那一刻是当天早上 8 点；
+ * 原来用「剩余毫秒 ÷ 一天」向下取整，到期前一天早上 8 点起就显示「今日到期」。现在按日历日比：
+ * 纯日期按字面那一天，带时刻的取它在本地的日期。
+ */
 export function getExpireDaysRemaining(
   iso: string | number | null | undefined,
   now = Date.now(),
 ): number | null {
   const ts = resolveExpireTimestamp(iso);
   if (ts == null || !Number.isFinite(now)) return null;
-  return Math.floor((ts - now) / 86400000);
+  const dateOnly = typeof iso === "string" ? DATE_ONLY_PATTERN.exec(iso.trim()) : null;
+  const expireDay = dateOnly
+    ? Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])) / 86400000
+    : localDayIndex(ts);
+  return expireDay - localDayIndex(now);
 }
 
 function resolveExpireTone(days: number | null | undefined): ExpireTone {

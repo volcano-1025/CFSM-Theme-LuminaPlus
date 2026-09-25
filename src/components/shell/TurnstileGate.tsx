@@ -67,6 +67,17 @@ export function TurnstileGate() {
   const widgetIdRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
+  /**
+   * 点「重试」就加一，下面的 effect 据此把验证组件拆掉重新渲染。
+   *
+   * 出错后组件自己不会再给新 token：token 只能用一次，提交被后端拒了组件还停在「已通过」；
+   * 脚本没加载出来就根本没有组件。原来只能刷新整个页面。
+   */
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => {
+    setError(null);
+    setAttempt((value) => value + 1);
+  }, []);
 
   // 凭证过期后，首页轮询、保存到后端等请求会被 403，http 层清掉凭证并通知这里：重新拉 config，
   // 让下面的判断拿到 `verified: false`，弹窗重新出来。
@@ -137,7 +148,7 @@ export function TurnstileGate() {
         }
       }
     };
-  }, [config, needsVerification, submitToken]);
+  }, [attempt, config, needsVerification, submitToken]);
 
   if (!needsVerification) return null;
 
@@ -158,6 +169,15 @@ export function TurnstileGate() {
           <p role="alert" className="text-[12px] text-[var(--status-error)]">
             {error}
           </p>
+        )}
+        {error && !verifying && (
+          <button
+            type="button"
+            onClick={retry}
+            className="control-button px-4 py-2 text-[13px] font-medium"
+          >
+            重试
+          </button>
         )}
       </div>
     </div>

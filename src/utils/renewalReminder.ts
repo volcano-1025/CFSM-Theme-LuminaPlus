@@ -72,8 +72,9 @@ export function getRenewalReminders(
     const expiresAt = resolveExpireTimestamp(node.expired_at);
     if (expiresAt == null) continue;
 
-    // 与节点卡、列表和资产页共用同一套向下取整口径，避免同屏出现 2 天/3 天。
-    const daysRemaining = getExpireDaysRemaining(expiresAt, now);
+    // 与节点卡、列表和资产页共用同一套日历日口径，避免同屏出现 2 天/3 天。传原始字符串：
+    // 纯日期要按字面那一天算，换成时间戳就只剩 UTC 零点了。
+    const daysRemaining = getExpireDaysRemaining(node.expired_at, now);
     if (daysRemaining == null) continue;
     if (daysRemaining > warningDays) continue;
 
