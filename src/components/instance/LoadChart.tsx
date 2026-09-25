@@ -1,5 +1,6 @@
 import {
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -227,7 +228,7 @@ function buildBaseOptions({
   spanGaps,
   axisKind,
   axisSize = 52,
-  xRange,
+  getXRange,
   fillAllSeries,
 }: {
   title: string;
@@ -238,7 +239,11 @@ function buildBaseOptions({
   spanGaps?: boolean;
   axisKind: "percent" | "network" | "byteRate" | "count";
   axisSize?: number;
-  xRange?: [number, number] | null;
+  /**
+   * 历史档钉住的横轴区间，传取值函数而不是区间本身：实时样本每接上一个，区间右端就往后推一次，
+   * 区间要是进了 options，uplot-react 比出 options 变了就把整张图销毁重建（每一两秒六张图全部重画）。
+   */
+  getXRange?: (() => [number, number] | null) | null;
   fillAllSeries?: boolean;
 }): Omit<uPlot.Options, "width" | "height"> {
   const isDark = resolvedAppearance === "dark";
@@ -249,7 +254,9 @@ function buildBaseOptions({
     cursor: { drag: { x: true, y: false } },
     legend: { show: false },
     scales: {
-      x: xRange ? { time: true, auto: false, range: () => xRange } : { time: true },
+      x: getXRange
+        ? { time: true, auto: false, range: (_self, min, max) => getXRange() ?? [min, max] }
+        : { time: true },
       y: { auto: true },
     },
     axes: [
@@ -354,6 +361,14 @@ const ChartCard = memo(function ChartCard({
   useLayoutEffect(() => {
     dataRef.current = data;
   }, [data]);
+  // 区间放 ref 里，options 只跟「有没有钉区间」走；uplot-react 的 setData 在子组件的 effect 里，
+  // 晚于这里的 layout effect，重算横轴时读到的已经是新区间。
+  const xRangeRef = useRef(xRange ?? null);
+  useLayoutEffect(() => {
+    xRangeRef.current = xRange ?? null;
+  }, [xRange]);
+  const hasXRange = xRange != null;
+  const readXRange = useCallback(() => xRangeRef.current, []);
   const baseOptions = useMemo(
     () =>
       buildBaseOptions({
@@ -365,7 +380,7 @@ const ChartCard = memo(function ChartCard({
         spanGaps,
         axisKind,
         axisSize,
-        xRange,
+        getXRange: hasXRange ? readXRange : null,
         fillAllSeries,
       }),
     [
@@ -373,12 +388,13 @@ const ChartCard = memo(function ChartCard({
       axisSize,
       colors,
       fillAllSeries,
+      hasXRange,
       keys,
       rangeHours,
+      readXRange,
       resolvedAppearance,
       spanGaps,
       title,
-      xRange,
     ],
   );
 
@@ -431,12 +447,9 @@ const ChartCard = memo(function ChartCard({
         </div>
       </header>
       <div ref={chartSizeRef} className="instance-uplot-wrap">
-        <UplotReact
-          key={`${uuid}-${rangeHours}`}
-          options={chartOptions}
-          data={data}
-          resetScales={rangeHours === 0}
-        />
+        {/* 每档都要重算坐标轴：历史档的横轴右端跟着实时样本走、纵轴要装得下新样本。
+            历史档横轴本来就钉在区间上（拖选缩放不生效），重算不会丢掉什么。 */}
+        <UplotReact key={`${uuid}-${rangeHours}`} options={chartOptions} data={data} />
         <ChartTooltip tooltip={tooltip} />
       </div>
     </div>
