@@ -353,7 +353,7 @@ type ThemeDraft = Omit<
 };
 
 // 服务端设置 → 表单草稿。reseed effect 和重置按钮都经 seedDrafts 走这里。
-function draftFromSettings(settings: ResolvedThemeSettings): ThemeDraft {
+export function draftFromSettings(settings: ResolvedThemeSettings): ThemeDraft {
   const {
     hiddenNodes,
     costIgnoredNodes,
@@ -372,6 +372,40 @@ function draftFromSettings(settings: ResolvedThemeSettings): ThemeDraft {
     hiddenNodesText: hiddenNodes.join("\n"),
     costIgnoredText: costIgnoredNodes.join("\n"),
   };
+}
+
+/**
+ * 设置变了（别的设备改过、同步前重拉了 config）时的新草稿：用户改过的项（和上次灌进来的底不一样）留着，
+ * 其余换成新值。原来是「表单有改动就整份不灌」—— 草稿里没改的几十项就一直是打开页面时那份，
+ * 自动保存时又当成改动存回去，站长在别的设备上的改动被这台设备的旧值整份盖掉。
+ */
+export function rebaseDraft(current: ThemeDraft, base: ThemeDraft, next: ThemeDraft): ThemeDraft {
+  const out: Record<string, unknown> = { ...next };
+  for (const key of Object.keys(next) as (keyof ThemeDraft)[]) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(base[key])) out[key] = current[key];
+  }
+  return out as ThemeDraft;
+}
+
+/**
+ * 自动保存只存和当前设置不一样的项。存整份的话，本机就有了每一项的副本，站长那边整份同步上去，
+ * 别的设备改过、这台没动过的项也会被写回这台设备看到的旧值。
+ */
+export function changedManagedSettings(
+  draftSettings: ThemeSettings,
+  source: ResolvedThemeSettings,
+): Record<string, unknown> {
+  const draftManaged = pickManagedThemeSettings(
+    normalizeThemeSettings(draftSettings as ThemeSettings & Record<string, unknown>),
+  );
+  const sourceManaged = pickManagedThemeSettings(source);
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(draftManaged) as (keyof ManagedThemeSettings)[]) {
+    if (JSON.stringify(draftManaged[key]) !== JSON.stringify(sourceManaged[key])) {
+      out[key] = (draftSettings as Record<string, unknown>)[key];
+    }
+  }
+  return out;
 }
 
 type BooleanDraftKey = {
@@ -1044,10 +1078,14 @@ export function ThemeManage() {
     [sourceThemeSettings],
   );
   const lastSeededSignatureRef = useRef<string | null>(null);
+  /** 草稿是在哪份设置上改的（草稿形态）：rebaseDraft 据此分辨哪些项是用户改过的。 */
+  const draftBaseRef = useRef<ThemeDraft | null>(null);
 
   // 把服务端设置灌入草稿的唯一出口,reseed effect 和重置按钮都走它,避免两边逻辑漂移。
   const seedDrafts = useCallback((next: ResolvedThemeSettings) => {
-    setDraft(draftFromSettings(next));
+    const seeded = draftFromSettings(next);
+    draftBaseRef.current = seeded;
+    setDraft(seeded);
   }, []);
 
   const sortedTasks = useMemo(() => sortTasks(pingTasks), [pingTasks]);
@@ -1265,15 +1303,21 @@ export function ThemeManage() {
     if (isDirty) setMessage(null);
   }, [isDirty]);
 
-  // 服务端设置真正变化时灌入草稿。首次灌入之后,只要表单有未保存编辑(含保存中)就跳过,
-  // 避免 refetch / 其他端保存的回流静默覆盖用户草稿。
+  // 服务端设置真正变化时灌入草稿。首次整份灌；之后按项合并（rebaseDraft）：用户改过、还没存的项留着，
+  // 其余跟上新设置 —— refetch / 其他端保存的回流不会盖掉正在改的，没改的也不会停在旧值。
   useEffect(() => {
     if (!config) return;
     if (lastSeededSignatureRef.current === sourceSignature) return;
-    if (lastSeededSignatureRef.current !== null && isDirty) return;
     lastSeededSignatureRef.current = sourceSignature;
-    seedDrafts(sourceThemeSettings);
-  }, [config, isDirty, sourceSignature, sourceThemeSettings, seedDrafts]);
+    const base = draftBaseRef.current;
+    if (base === null) {
+      seedDrafts(sourceThemeSettings);
+      return;
+    }
+    const next = draftFromSettings(sourceThemeSettings);
+    draftBaseRef.current = next;
+    setDraft((current) => rebaseDraft(current, base, next));
+  }, [config, sourceSignature, sourceThemeSettings, seedDrafts]);
 
   // 每个 client 归属哪个 task 的反查,只在绑定草稿变化时重建。与「全选可用」reducer
   // 共用 invertBindings() 避免推导漂移,并把可选节点过滤保持在 O(tasks × clients),
@@ -1316,7 +1360,12 @@ export function ThemeManage() {
     const save = () => {
       autoSaveRef.current = null;
       lastSeededSignatureRef.current = draftSignature;
-      saveLocalThemeSettings({ ...getLocalThemeSettings(), ...draftThemeSettings });
+      // 存完「当前设置」就是这份草稿，之后再来的新设置以它为底合并。
+      draftBaseRef.current = draft;
+      saveLocalThemeSettings({
+        ...getLocalThemeSettings(),
+        ...changedManagedSettings(draftThemeSettings, sourceThemeSettings),
+      });
       setSavedLocally(true);
     };
     autoSaveRef.current = save;
@@ -1324,11 +1373,13 @@ export function ThemeManage() {
     return () => window.clearTimeout(timer);
   }, [
     config,
+    draft,
     draftCostRateApiUrlInvalid,
     draftMultiPingInvalid,
     draftSignature,
     draftThemeSettings,
     sourceSignature,
+    sourceThemeSettings,
   ]);
   // 停手不到防抖时长就离开设置页：把这次改动存上（站长的由自动同步在页面外照常发出去）。
   useEffect(() => () => autoSaveRef.current?.(), []);

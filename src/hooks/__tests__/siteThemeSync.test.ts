@@ -70,6 +70,10 @@ beforeEach(() => {
   queryClient.clear();
   mocks.saveThemeOptions.mockReset();
   mocks.getPublic.mockReset();
+  // 默认后端和缓存里的是同一份；要模拟「别的设备改过」的用例自己换掉。
+  mocks.getPublic.mockImplementation(() =>
+    Promise.resolve(queryClient.getQueryData<PublicConfig>(["public"])),
+  );
   window.localStorage.setItem("jwt_token", "token");
   seedConfig();
 });
@@ -115,6 +119,52 @@ describe("登录站长的改动自动同步到后端", () => {
     expect(mocks.saveThemeOptions).toHaveBeenCalledTimes(1);
     expect(siteSettings()).toMatchObject({ homepagePingLineOverrides: { "node-a": { "0": 4 } } });
     expect(getAllPingLineOverrides()).toEqual({});
+  });
+
+  it("发之前重拉 config 当底：别的设备改过的项不被这台的旧副本盖掉", async () => {
+    acceptWrites();
+    // 这台设备几小时前拿到的 config：透明度 100、多线路开着。
+    seedConfig({ surfaceOpacity: 100, enableHomepageMultiPing: true });
+    // 之后站长在别的设备上改成了透明度 50、关掉多线路。
+    mocks.getPublic.mockResolvedValue({
+      theme_settings: { surfaceOpacity: 50, enableHomepageMultiPing: false },
+    } as unknown as PublicConfig);
+    stop = startSiteThemeAutoSync();
+
+    saveLocalThemeSettings({ desktopNodeViewMode: "list" });
+    await flushDebounce();
+
+    expect(mocks.getPublic).toHaveBeenCalledTimes(1);
+    expect(mocks.saveThemeOptions).toHaveBeenCalledTimes(1);
+    expect(mocks.saveThemeOptions.mock.calls[0][0]).toMatchObject({
+      surfaceOpacity: 50,
+      enableHomepageMultiPing: false,
+      desktopNodeViewMode: "list",
+    });
+  });
+
+  it("重拉 config 失败就不发，改动留在本机等重试", async () => {
+    acceptWrites();
+    const fetchConfig = mocks.getPublic.getMockImplementation();
+    mocks.getPublic.mockRejectedValue(new ApiRequestError("bad gateway", 502, "/api/config"));
+    stop = startSiteThemeAutoSync();
+
+    saveLocalThemeSettings({ desktopNodeViewMode: "list" });
+    await flushDebounce();
+    // 5xx 按 queryClient 的默认规则重试一次，都失败才报错。
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(mocks.getPublic).toHaveBeenCalledTimes(2);
+    expect(mocks.saveThemeOptions).not.toHaveBeenCalled();
+    expect(getSiteThemeSyncStatus().phase).toBe("error");
+    expect(getLocalThemeSettings()).toEqual({ desktopNodeViewMode: "list" });
+
+    mocks.getPublic.mockImplementation(fetchConfig!);
+    retrySiteThemeSync();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mocks.saveThemeOptions).toHaveBeenCalledTimes(1);
+    expect(getLocalThemeSettings()).toEqual({});
   });
 
   it("未登录的访客只存本机，不发请求", async () => {
