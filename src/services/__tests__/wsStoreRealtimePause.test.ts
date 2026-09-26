@@ -194,9 +194,51 @@ describe("页面进后台", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getNodeMetricsSnapshot("node-a")?.netDown).toBe(100);
 
-    // 过了握手宽限期还是连不上，就是真连不上：轮询兜底时快照是唯一的数据源，照用。
+    // 这次打开页面连上过，重连慢只是后端冷启动：5 秒还不算连不上（原来 5 秒就采用，线上被顶到 5.93 MB/s）。
     await vi.advanceTimersByTimeAsync(5_000);
+    expect(store.getNodeMetricsSnapshot("node-a")?.netDown).toBe(100);
+
+    // 过了重连宽限期还是连不上，就是真连不上：轮询兜底时快照是唯一的数据源，照用。
+    await vi.advanceTimersByTimeAsync(store.WS_RECONNECT_GRACE_MS);
     expect(store.getNodeMetricsSnapshot("node-a")?.netDown).toBe(9_999);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("does not poll the cached snapshot every 5 seconds while a known-good connection is reconnecting", async () => {
+    const store = await loadStore();
+    const release = store.retainStore();
+    await vi.advanceTimersByTimeAsync(0);
+
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(store.HIDDEN_REALTIME_PAUSE_DELAY_MS);
+    mocks.autoOpen = false;
+    setHidden(false);
+    await vi.advanceTimersByTimeAsync(0);
+    const afterResume = syncCount();
+
+    // 宽限期内只有切回来时补的那一次。
+    await vi.advanceTimersByTimeAsync(store.WS_RECONNECT_GRACE_MS - 1_000);
+    expect(syncCount()).toBe(afterResume);
+
+    // 过了宽限期还没连上，退回 5 秒轮询兜底。
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(syncCount()).toBeGreaterThan(afterResume);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("still falls back after 5 seconds on a site whose realtime never connected", async () => {
+    mocks.autoOpen = false;
+    const store = await loadStore();
+    const release = store.retainStore();
+    await vi.advanceTimersByTimeAsync(0);
+    const afterBootstrap = syncCount();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(syncCount()).toBeGreaterThan(afterBootstrap);
 
     release();
     await vi.advanceTimersByTimeAsync(0);

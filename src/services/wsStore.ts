@@ -88,6 +88,15 @@ const POLL_REFRESH_INTERVAL_MS = 5_000;
 /** 新建的 WebSocket 给一个轮询周期握手，期间不算「连不上」，见 {@link realtimeKnownUnavailable}。 */
 const WS_CONNECT_GRACE_MS = POLL_REFRESH_INTERVAL_MS;
 /**
+ * 这次打开页面实时连接**连上过**之后，断开重连（切回前台、网络抖动）的握手宽限。
+ *
+ * 连上过就说明这个站的实时推送能用，重连慢只是后端冷启动：2026-09-26 从本机连站长站点，握手一次 1.4 秒、一次 6.2 秒，
+ * 同日切回前台测到一次 16 秒才有数据。原来这里也只给 5 秒，一超就当成「连不上」：每 5 秒拉一次缓存快照、照单采用它
+ * 几十秒前的虚高速率，实时带宽被顶到 5.93 MB/s 又掉回来，站长看到的是「几秒内跳了好几次，然后不动了」。
+ * 宽限期内保持现值、不轮询（切回前台已补过一次快照），真连不上才退回兜底。
+ */
+export const WS_RECONNECT_GRACE_MS = 30_000;
+/**
  * WebSocket 正常时仍定期全量对齐，用于捕获元数据变更与节点增删。
  *
  * 后端 `/api/servers` 有服务端缓存（站长口径 30 秒；实测同一份字节至少冻结 24 秒，加随机
@@ -635,11 +644,18 @@ function sortServers(servers: CfsmServer[]) {
  * （2026-09-13 线上实测快照 1.0 秒、WS 握手 1.4 秒），这时认快照速率，顶部带宽会被旧值顶一下。
  */
 function realtimeKnownUnavailable(): boolean {
-  return (
-    connectionsByBase.size > 0 &&
-    connectedBases.size === 0 &&
-    Date.now() - connectionsCreatedAt >= WS_CONNECT_GRACE_MS
-  );
+  return realtimeWaiting() && !realtimeWithinGrace();
+}
+
+/** 有连接在建 / 在重连，但一条都还没连上。 */
+function realtimeWaiting(): boolean {
+  return connectionsByBase.size > 0 && connectedBases.size === 0;
+}
+
+/** 还在握手宽限期里：连上过就按重连算、给得长一些（见 {@link WS_RECONNECT_GRACE_MS}）。 */
+function realtimeWithinGrace(): boolean {
+  const graceMs = realtimeEverConnected ? WS_RECONNECT_GRACE_MS : WS_CONNECT_GRACE_MS;
+  return Date.now() - Math.max(connectionsCreatedAt, realtimeLostAt) < graceMs;
 }
 
 /**
@@ -1118,6 +1134,10 @@ const connectionsByBase = new Map<string, WsConnection>();
 const connectedBases = new Set<string>();
 /** 这一轮连接从何时开始建（从一条都没有到建起第一条），握手宽限期从这里算。 */
 let connectionsCreatedAt = 0;
+/** 连着的连接全部断开的时刻：连接对象还在、由 wsClient 自己退避重连时，宽限期从这里算。 */
+let realtimeLostAt = 0;
+/** 这次打开页面实时连接连上过没有，见 {@link WS_RECONNECT_GRACE_MS}。 */
+let realtimeEverConnected = false;
 
 /** 最近一次快照给出的「节点 → 所属后端」：切换详情页焦点时照它重排订阅，不必等下一次同步。 */
 let latestBaseByServerId = new Map<string, string>();
@@ -1141,6 +1161,8 @@ function realtimePaused(): boolean {
 function setRealtimeConnected(next: boolean) {
   if (realtimeConnected === next) return;
   realtimeConnected = next;
+  if (next) realtimeEverConnected = true;
+  else realtimeLostAt = Date.now();
   commit(state, { storeStatus: true });
 }
 
@@ -1385,8 +1407,10 @@ function ensureStarted() {
       void bootstrap();
       return;
     }
-    // WebSocket 正常推送时不需要轮询，交给全量刷新定时器。
+    // WebSocket 正常推送时不需要轮询，交给全量刷新定时器。重连还在宽限期里也不轮询：
+    // `/api/servers` 是缓存快照，速率这时本来就不采用，5 秒拉一次只是白读（见 WS_RECONNECT_GRACE_MS）。
     if (realtimeConnected) return;
+    if (realtimeEverConnected && realtimeWaiting() && realtimeWithinGrace()) return;
     void syncServers().catch(() => {});
   }, POLL_REFRESH_INTERVAL_MS);
 
