@@ -431,7 +431,8 @@ async function fetchHistoryRows(
     signal: undefined,
   })
     .then((rows) => {
-      historyCache.set(key, { fetchedAt: Date.now(), rows });
+      // 空结果不缓存：新节点刚开始上报时点「刷新」要能马上拿到（见 useRecords 的 recordStaleTime）。
+      if (rows.length > 0) historyCache.set(key, { fetchedAt: Date.now(), rows });
       backfillPingBuffer(serverId, rows);
       return rows;
     })

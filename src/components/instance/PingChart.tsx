@@ -563,7 +563,19 @@ export function PingChart({
   if (!data?.records.length) {
     return (
       <InstancePanel title="Ping 图表">
-        <div className="instance-empty">暂无延迟记录</div>
+        <div className="instance-empty">
+          <span>暂无延迟记录</span>
+          <button
+            type="button"
+            className="instance-toggle-button"
+            onClick={refetchAll}
+            disabled={isFetching}
+            aria-busy={isFetching}
+          >
+            <RefreshCw size={14} aria-hidden />
+            {isFetching ? "刷新中" : "刷新"}
+          </button>
+        </div>
       </InstancePanel>
     );
   }

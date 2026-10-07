@@ -671,7 +671,19 @@ export function LoadChart({
   if (!points.length) {
     return (
       <InstancePanel title="负载图表">
-        <div className="instance-empty">暂无负载历史数据</div>
+        <div className="instance-empty">
+          <span>暂无负载历史数据</span>
+          <button
+            type="button"
+            className="instance-toggle-button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            aria-busy={isFetching}
+          >
+            <RefreshCw size={14} aria-hidden />
+            {isFetching ? "刷新中" : "刷新"}
+          </button>
+        </div>
       </InstancePanel>
     );
   }
