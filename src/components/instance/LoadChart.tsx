@@ -58,6 +58,11 @@ const REALTIME_HISTORY_SEED_LIMIT = 60;
 const REALTIME_WINDOW_SECONDS = 15 * 60;
 const REALTIME_SAMPLE_LIMIT = 600;
 /**
+ * 「实时」档把实时样本按这个格宽合并（保峰）。原样 2 秒一个点时，比打底的历史（10 分钟档约 30 秒一行）密 15 倍，
+ * 挤成一团锯齿（站长 2026-10-07 截图）；10 秒一格时 15 分钟约 90 个点，仍比历史细 3 倍、短尖峰留得住（站长选的）。
+ */
+const REALTIME_LIVE_STEP_SECONDS = 10;
+/**
  * 回到前台、且离开超过这么久就把历史重拉一次。
  *
  * 页面在后台满 30 秒会断开实时推送（见 wsStore 的后台暂停），这段时间的数据只在后端的历史里，
@@ -564,9 +569,10 @@ export function LoadChart({
 
   const points = useMemo<ChartPoint[]>(() => {
     if (isRealtime) {
+      const seed = historyPoints.slice(-REALTIME_HISTORY_SEED_LIMIT);
       const seeded = mergeHistoryWithLivePoints(
-        historyPoints.slice(-REALTIME_HISTORY_SEED_LIMIT),
-        realtimePoints,
+        seed,
+        resampleLiveTail(seed, realtimePoints, LOAD_INTERPOLATE_KEYS, REALTIME_LIVE_STEP_SECONDS),
       );
       const newest = seeded[seeded.length - 1]?.time;
       const windowed =

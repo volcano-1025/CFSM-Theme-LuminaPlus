@@ -594,12 +594,14 @@ export function resampleLiveTail<T extends TimedMetricPoint>(
   history: readonly T[],
   live: readonly T[],
   keys: readonly string[],
+  /** 指定格宽（秒）；不给就取历史的点距。「实时」档用固定的细格，见 LoadChart。 */
+  stepSeconds?: number,
 ): T[] {
   const lastHistoryTime = history[history.length - 1]?.time;
   const tail = live.filter((point) => lastHistoryTime == null || point.time > lastHistoryTime);
   if (tail.length <= 1) return tail;
 
-  const step = resolveHistoryStepSeconds(history);
+  const step = stepSeconds && stepSeconds > 0 ? stepSeconds : resolveHistoryStepSeconds(history);
   const anchor = lastHistoryTime ?? tail[0]!.time;
   const buckets: T[][] = [];
   let currentIndex = Number.NaN;

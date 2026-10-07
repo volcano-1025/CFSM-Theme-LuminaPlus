@@ -357,4 +357,11 @@ describe("resampleLiveTail（历史档接实时样本按历史点距并格）", 
     ]);
     expect(tail.every((point) => point.swap === null)).toBe(true);
   });
+
+  it("指定格宽时按指定的并（「实时」档 10 秒一格）", () => {
+    const live = liveEvery2s(60, () => 2);
+    const tail = resampleLiveTail(history, live, ["cpu"], 10);
+    expect(tail.length).toBeGreaterThanOrEqual(6);
+    expect(tail.length).toBeLessThanOrEqual(7);
+  });
 });
