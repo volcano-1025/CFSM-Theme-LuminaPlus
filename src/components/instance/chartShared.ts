@@ -448,3 +448,29 @@ export function useResponsiveChartSize(mode: "grid" | "wide") {
 
   return { ...size, ref };
 }
+
+/** 可见范围里有效点不超过这么多就把圆点画出来。 */
+const SPARSE_POINT_LIMIT = 20;
+
+/**
+ * 数据稀疏时画出数据点，平时只画线。
+ *
+ * 新加的节点只有一两分钟数据时，几个点挤在长时间轴的最右边不到 1 像素，又不画点，图上看着是空的
+ * （站长 2026-10-09 截图：「12 小时」覆盖 1 分钟，一条线都看不见）；孤立的单点（前后都是断点）也一样画不出线。
+ */
+export const SPARSE_SERIES_POINTS: uPlot.Series.Points = {
+  show: (self, seriesIdx, idx0, idx1) => {
+    const values = self.data[seriesIdx];
+    if (!values) return false;
+    let count = 0;
+    for (let index = idx0; index <= idx1; index += 1) {
+      const value = values[index];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        count += 1;
+        if (count > SPARSE_POINT_LIMIT) return false;
+      }
+    }
+    return count > 0;
+  },
+  size: 5,
+};

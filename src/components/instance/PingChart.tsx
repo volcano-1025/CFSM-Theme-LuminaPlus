@@ -11,6 +11,7 @@ import {
   colorForSeries,
   createTimeAxisFormatter,
   getAxisColors,
+  SPARSE_SERIES_POINTS,
   toChartSeconds,
   useResponsiveChartSize,
   type ChartTooltipState,
@@ -433,7 +434,7 @@ export function PingChart({
           width: 1.7,
           spanGaps: connectNulls,
           show: !hiddenTasks.has(task.id),
-          points: { show: false },
+          points: SPARSE_SERIES_POINTS,
         })),
       ],
       hooks: {

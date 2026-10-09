@@ -17,6 +17,7 @@ import { useNodeMeta, useNodeMetrics } from "@/hooks/useNode";
 import { InstancePanel, InstanceChartLoading } from "./InstancePanel";
 import {
   buildChartTooltipHooks,
+  SPARSE_SERIES_POINTS,
   CHART_PALETTE,
   createTimeAxisFormatter,
   formatChartCoverageTime,
@@ -302,7 +303,7 @@ function buildBaseOptions({
         width: 1.6,
         paths: SPLINE_PATHS,
         spanGaps: spanGaps ?? false,
-        points: { show: false },
+        points: SPARSE_SERIES_POINTS,
       })),
     ],
     hooks: {
