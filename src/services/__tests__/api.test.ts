@@ -375,6 +375,23 @@ describe("getServersSnapshot", () => {
     expect(snapshot.partial).toBe(false);
   });
 
+  it("records when the backend last heard from each node", async () => {
+    // `servers[].last_updated` 是探针时钟打的样本时间；`latestReportUpdates[].reportTs` 才是后端收到的时刻。
+    fetchMock.mockImplementation(
+      jsonReply({
+        servers: [serverPayload({ id: "node-a" }), serverPayload({ id: "node-b" })],
+        latestReportUpdates: [{ serverId: "node-a", reportTs: 1_791_626_976_459, samples: [] }],
+      }),
+    );
+
+    const snapshot = await getServersSnapshot();
+
+    expect(snapshot.servers.find((item) => item.id === "node-a")?.report_timestamp).toBe(
+      1_791_626_976_459,
+    );
+    expect(snapshot.servers.find((item) => item.id === "node-b")?.report_timestamp).toBeUndefined();
+  });
+
   it("merges multiple api bases and marks a partial result when one fails", async () => {
     const meta = document.createElement("meta");
     meta.name = "apiBase";

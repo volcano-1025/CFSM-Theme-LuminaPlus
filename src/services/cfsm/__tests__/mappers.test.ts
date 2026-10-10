@@ -12,6 +12,7 @@ import {
   inferIntervalSeconds,
   isServerOnline,
   mergeServerPatch,
+  withReportTimestamp,
   normalizeTimestamp,
   normalizeTrafficCalcType,
   parseGpuInfo,
@@ -216,6 +217,33 @@ describe("toNodeMetrics", () => {
     expect(toNodeMetrics(stale, NOW).online).toBe(false);
   });
 
+  it("judges online by when the backend heard from the node, not by the node's own clock", () => {
+    // 站长 2026-10-10：一台节点时钟慢 321 秒，样本时间永远「超过 5 分钟」，但后端一直在收它的上报。
+    const slowClock = server({
+      last_updated: NOW - 321_000,
+      timestamp: NOW - 321_000,
+      report_timestamp: NOW - 2_000,
+    });
+    expect(isServerOnline(slowClock, NOW)).toBe(true);
+    expect(toNodeMetrics(slowClock, NOW).online).toBe(true);
+
+    // 沿用下来的上报时刻已经旧了（页面隐藏了十分钟），快照的样本时间是新的：照样在线。
+    const resumed = server({ last_updated: NOW - 30_000, report_timestamp: NOW - 10 * 60_000 });
+    expect(isServerOnline(resumed, NOW)).toBe(true);
+
+    // 两个都旧才是掉线。
+    const gone = server({ last_updated: NOW - 11 * 60_000, report_timestamp: NOW - 6 * 60_000 });
+    expect(isServerOnline(gone, NOW)).toBe(false);
+  });
+
+  it("only moves the report time forward", () => {
+    const base = server({ report_timestamp: NOW });
+    expect(withReportTimestamp(base, NOW - 1_000)).toBe(base);
+    expect(withReportTimestamp(base, undefined)).toBe(base);
+    expect(withReportTimestamp(base, NOW + 1_000).report_timestamp).toBe(NOW + 1_000);
+    expect(withReportTimestamp(server(), NOW).report_timestamp).toBe(NOW);
+  });
+
   it("reuses the previous ping object when nothing changed, to avoid re-renders", () => {
     const previous = toNodeMetrics(server(), NOW);
     const next = toNodeMetrics(server(), NOW, previous);
@@ -237,6 +265,16 @@ describe("toNodeMetrics", () => {
 });
 
 describe("mergeServerPatch", () => {
+  it("keeps a node with a slow clock online while frames keep arriving", () => {
+    const stale = server({ last_updated: NOW - 400_000, timestamp: NOW - 400_000 });
+    expect(isServerOnline(stale, NOW)).toBe(false);
+
+    const merged = mergeServerPatch(stale, { cpu: 12 }, NOW - 321_000, NOW);
+    expect(merged.last_updated).toBe(NOW - 321_000);
+    expect(merged.report_timestamp).toBe(NOW);
+    expect(isServerOnline(merged, NOW)).toBe(true);
+  });
+
   it("only overwrites the fields present in the incremental sample", () => {
     const base = server();
     const merged = mergeServerPatch(base, { cpu: 88, ram_used: 6000 }, NOW + 5_000);

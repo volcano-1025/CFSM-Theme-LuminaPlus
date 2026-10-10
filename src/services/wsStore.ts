@@ -11,6 +11,7 @@ import {
   emptyNodeMetrics,
   isServerOnline,
   mergeServerPatch,
+  withReportTimestamp,
   normalizeTimestamp,
   parseLatencyWindow,
   toNodeInfo,
@@ -708,7 +709,10 @@ async function performServersSync(focusUuid: string | null) {
 
     const now = Date.now();
     const { servers: snapshotServers, baseByServerId } = withUnreachableSiteServers(snapshot);
-    const servers = sortServers(snapshotServers);
+    // 快照是缓存的，里面的上报时刻可能比 WS 已经记下的旧：留新的那个，不然时钟慢的节点一补快照就闪一下掉线。
+    const servers = sortServers(snapshotServers).map((server) =>
+      withReportTimestamp(server, state.rawByUuid[server.id]?.report_timestamp),
+    );
     const order = servers.map((server) => server.id);
     const touchedMeta = new Set<string>();
     const touchedMetrics = new Set<string>();
@@ -1055,7 +1059,7 @@ function applyWsSamples(samples: WsSample[]) {
   for (const sample of samples) {
     const base = nextRawByUuid[sample.serverId];
     if (!base) continue;
-    const merged = mergeServerPatch(base, sample.data, sample.ts);
+    const merged = mergeServerPatch(base, sample.data, sample.ts, sample.reportTs);
     if (merged === base) continue;
     if (nextRawByUuid === state.rawByUuid) {
       nextRawByUuid = { ...state.rawByUuid };

@@ -90,6 +90,7 @@ describe("createWsConnection", () => {
 
     socket().emit({
       type: "batchUpdate",
+      ts: 900,
       updates: [
         { serverId: "node-a", samples: [{ ts: 1, data: { cpu: 10 } }] },
         { serverId: "node-b", samples: [{ ts: 2, payload: { cpu: 20 } }] },
@@ -98,10 +99,31 @@ describe("createWsConnection", () => {
     });
 
     expect(batches[0]).toEqual([
-      { serverId: "node-a", ts: 1, data: { cpu: 10 } },
-      { serverId: "node-b", ts: 2, data: { cpu: 20 } },
-      { serverId: "node-c", ts: 3, data: { cpu: 30 } },
+      { serverId: "node-a", ts: 1, reportTs: 900, data: { cpu: 10 } },
+      { serverId: "node-b", ts: 2, reportTs: 900, data: { cpu: 20 } },
+      { serverId: "node-c", ts: 3, reportTs: 900, data: { cpu: 30 } },
     ]);
+  });
+
+  it("carries the report time separately from the sample time", () => {
+    // 样本 ts 是探针时钟打的，可能慢好几分钟；判在线要用后端收到上报的时刻。
+    const { batches, socket } = connect(["node-a"]);
+    socket().open();
+
+    socket().emit({
+      type: "batchUpdate",
+      ts: 900,
+      updates: [{ serverId: "node-a", reportTs: 950, samples: [{ ts: 1, data: { cpu: 10 } }] }],
+    });
+    expect(batches[0]?.[0]?.reportTs).toBe(950);
+
+    // 消息和 update 都没带时间：用到达时刻。
+    const before = Date.now();
+    socket().emit({
+      type: "batchUpdate",
+      updates: [{ serverId: "node-a", samples: [{ ts: 2, data: { cpu: 11 } }] }],
+    });
+    expect(batches[1]?.[0]?.reportTs).toBeGreaterThanOrEqual(before);
   });
 
   it("ignores non-batchUpdate frames", () => {

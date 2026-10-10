@@ -2,11 +2,13 @@ import { z } from "zod";
 import {
   CfsmServerSchema,
   HistoryRowSchema,
+  LatestReportUpdateSchema,
   ServersResponseSchema,
   SiteConfigSchema,
   SysConfigSchema,
   type CfsmServer,
   type HistoryRow,
+  type LatestReportUpdate,
   type LoadRecordsResponse,
   type Me,
   type NodeInfo,
@@ -32,6 +34,7 @@ import {
   historyRowsToPingSamples,
   inferIntervalSeconds,
   toNodeInfo,
+  withReportTimestamp,
 } from "@/services/cfsm/mappers";
 import { seedMeasuredHistory } from "@/services/pingLiveStore";
 import { resolvePreferredAppearance } from "@/utils/themeSettings";
@@ -259,6 +262,16 @@ function emptyStats(): AggregatedStats {
   };
 }
 
+/** 各节点「后端收到最近一次上报的时刻」，取自快照的 `latestReportUpdates`；判在线用它（见 `isServerOnline`）。 */
+function reportTimestampsOf(updates: LatestReportUpdate[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const update of updates) {
+    const reportTs = Number(update.reportTs ?? 0);
+    if (reportTs > (out.get(update.serverId) ?? 0)) out.set(update.serverId, reportTs);
+  }
+  return out;
+}
+
 /**
  * 拉取全部后端的服务器列表并合并。多站部署下单站失败不阻塞其它站，
  * 但全部失败时抛出第一个错误，让上层进入错误态而不是渲染空列表。
@@ -286,12 +299,13 @@ export async function getServersSnapshot(
     succeeded += 1;
 
     const seen = new Set<string>();
+    const reportTimestamps = reportTimestampsOf(result.data.latestReportUpdates);
     for (const server of result.data.servers) {
       // 同一 ID 在多站同时出现时以第一个站为准，避免重复卡片。
       if (!server.id || seen.has(server.id) || baseByServerId.has(server.id)) continue;
       seen.add(server.id);
       baseByServerId.set(server.id, result.base);
-      servers.push(server);
+      servers.push(withReportTimestamp(server, reportTimestamps.get(server.id)));
     }
 
     for (const [region, count] of Object.entries(result.data.regionStats)) {
@@ -338,12 +352,21 @@ export async function getNodes(
 /** `/api/server?id=` 的响应：服务器字段平铺在顶层，另带 `sysConfig`（和 `/api/servers` 里那份同构）。 */
 const SingleServerResponseSchema = z.unknown().transform((raw, ctx) => {
   const server = CfsmServerSchema.safeParse(raw);
-  const extras = z.object({ sysConfig: SysConfigSchema.default({}) }).safeParse(raw);
+  const extras = z
+    .object({
+      sysConfig: SysConfigSchema.default({}),
+      latestReportUpdates: z.array(LatestReportUpdateSchema).default([]),
+    })
+    .safeParse(raw);
   if (!server.success || !extras.success) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid /api/server response" });
     return z.NEVER;
   }
-  return { server: server.data, sysConfig: extras.data.sysConfig };
+  const reportTs = reportTimestampsOf(extras.data.latestReportUpdates).get(server.data.id);
+  return {
+    server: withReportTimestamp(server.data, reportTs),
+    sysConfig: extras.data.sysConfig,
+  };
 });
 
 /**
@@ -375,7 +398,7 @@ export async function getServerSnapshot(
   };
 }
 
-/** 单台服务器详情。带 `latestReportUpdates`，主题目前只用其中的服务器字段。 */
+/** 单台服务器详情。 */
 export async function getServerDetail(
   serverId: string,
   options?: RequestOptions,

@@ -27,7 +27,10 @@ const POLICY_VIOLATION_CLOSE_CODE = 1008;
 
 export interface WsSample {
   serverId: string;
+  /** 样本时间，探针按节点自己的时钟打的。 */
   ts: number;
+  /** 后端收到这次上报的时刻（`update.reportTs`，没有就用消息的 `ts`，再没有用到达时刻），判在线用。 */
+  reportTs: number;
   data: Record<string, unknown>;
 }
 
@@ -63,11 +66,13 @@ function extractSamples(message: unknown): WsSample[] {
   if (payload.type !== "batchUpdate" || !Array.isArray(payload.updates)) return [];
 
   const out: WsSample[] = [];
+  const messageTs = Number(payload.ts ?? 0) || Date.now();
   for (const rawUpdate of payload.updates) {
     if (!rawUpdate || typeof rawUpdate !== "object") continue;
     const update = rawUpdate as Record<string, unknown>;
     const serverId = String(update.serverId ?? "").trim();
     if (!serverId || !Array.isArray(update.samples)) continue;
+    const reportTs = Number(update.reportTs ?? update.report_timestamp ?? 0) || messageTs;
 
     for (const rawSample of update.samples) {
       if (!rawSample || typeof rawSample !== "object") continue;
@@ -79,6 +84,7 @@ function extractSamples(message: unknown): WsSample[] {
       out.push({
         serverId,
         ts: Number(sample.ts ?? sample.timestamp ?? 0) || 0,
+        reportTs,
         data,
       });
     }
