@@ -113,6 +113,15 @@ const EMPTY_SAMPLES: readonly PingLiveSample[] = [];
 const samplesByUuid = new Map<string, readonly PingLiveSample[]>();
 /** 后端下发的探测窗口（跨度由后端定，见 {@link PING_WINDOW_MS}），按节点存最近一份。 */
 const windowByUuid = new Map<string, readonly PingLiveSample[]>();
+/** 同一份窗口去复印件之前的样子：{@link setWindowBackfillGuard} 的开关变了要拿它重算。 */
+const rawWindowByUuid = new Map<string, readonly PingLiveSample[]>();
+/**
+ * 要不要把窗口里「连续几格逐字节相同」的段当复印件丢掉（{@link dropBackfilledRuns}）。默认要：还不知道后端新旧时按旧的防。
+ * 后端在 `/api/config` 里下发了 `latency_window` 就关掉 —— 那是 2026-08-24 加的字段，晚于修掉复印填充的 08-23，
+ * 新后端没数据的段下发的是空点，连续相同只可能是真数据：延迟恒定的节点（三条线路都是 4 ms / 0%）会被整段误丢，
+ * 首页柱子中间空一截（别的站长 2026-10-10 的截图）。
+ */
+let windowBackfillGuard = true;
 /** 对外可见的合并结果，引用稳定（`useSyncExternalStore` 要求）。 */
 const seriesByUuid = new Map<string, readonly PingLiveSample[]>();
 const listenersByUuid = new Map<string, Set<Listener>>();
@@ -557,7 +566,8 @@ export function seedPingHistory(
   const usable = [...window]
     .filter((sample) => isFresh(sample, now))
     .sort((left, right) => left.time - right.time);
-  const fresh = dropBackfilledRuns(usable);
+  rawWindowByUuid.set(uuid, usable);
+  const fresh = windowBackfillGuard ? dropBackfilledRuns(usable) : usable;
 
   const previous = windowByUuid.get(uuid);
   // 整段都是复印件时 fresh 为空：也要落盘，否则上一份（含复印件的）窗口会一直留着。
@@ -572,6 +582,16 @@ export function seedPingHistory(
   if (previous && sameSeries(previous, fresh)) return;
   windowByUuid.set(uuid, fresh);
   refreshSeries(uuid, now);
+}
+
+/**
+ * 后端声明了窗口口径（新后端）就不再去复印件，见 {@link windowBackfillGuard}。
+ * config 常常比第一份快照晚到，开关变了把手里的窗口按新口径重算一遍，不用等下一次 60 秒同步。
+ */
+export function setWindowBackfillGuard(enabled: boolean): void {
+  if (windowBackfillGuard === enabled) return;
+  windowBackfillGuard = enabled;
+  for (const [uuid, raw] of [...rawWindowByUuid]) seedPingHistory(uuid, raw);
 }
 
 /**
@@ -646,6 +666,9 @@ export function retainPingNodes(uuids: Iterable<string>): void {
   for (const uuid of [...windowByUuid.keys()]) {
     if (!keep.has(uuid)) windowByUuid.delete(uuid);
   }
+  for (const uuid of [...rawWindowByUuid.keys()]) {
+    if (!keep.has(uuid)) rawWindowByUuid.delete(uuid);
+  }
   for (const uuid of [...seriesByUuid.keys()]) {
     if (!keep.has(uuid)) seriesByUuid.delete(uuid);
   }
@@ -656,6 +679,8 @@ export function retainPingNodes(uuids: Iterable<string>): void {
 export function resetPingLiveStore(): void {
   samplesByUuid.clear();
   windowByUuid.clear();
+  rawWindowByUuid.clear();
+  windowBackfillGuard = true;
   seriesByUuid.clear();
   listenersByUuid.clear();
   hydrated = false;

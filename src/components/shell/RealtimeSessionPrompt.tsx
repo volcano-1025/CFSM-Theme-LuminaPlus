@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import { Unplug } from "lucide-react";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
+import { setWindowBackfillGuard } from "@/services/pingLiveStore";
 import {
   getStoreStatusSnapshot,
   resumeRealtimeSession,
@@ -30,6 +31,12 @@ export function RealtimeSessionPrompt() {
   useEffect(() => {
     setRealtimeSessionLimitMinutes(minutes);
   }, [minutes]);
+
+  // 同样是把 config 带进数据层：后端声明了首页延迟窗口口径（新后端），窗口就不用再去「复印件」了。
+  const declaresLatencyWindow = config ? config.latencyWindow != null : null;
+  useEffect(() => {
+    if (declaresLatencyWindow != null) setWindowBackfillGuard(!declaresLatencyWindow);
+  }, [declaresLatencyWindow]);
 
   // 恢复之后清掉「关闭过」，下一次到时限还要再问。
   useEffect(() => {

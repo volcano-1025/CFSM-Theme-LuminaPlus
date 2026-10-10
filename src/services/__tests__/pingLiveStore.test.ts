@@ -7,6 +7,7 @@ import {
   retainPingNodes,
   seedMeasuredHistory,
   seedPingHistory,
+  setWindowBackfillGuard,
   subscribePingHistory,
   type PingLiveSample,
 } from "@/services/pingLiveStore";
@@ -596,6 +597,21 @@ describe("丢弃后端窗口里复制出来的格子", () => {
     seedPingHistory(uuid, windowOf(Array.from({ length: 30 }, () => [1, 1, 1])));
 
     expect(getPingHistorySnapshot(uuid)).toHaveLength(0);
+  });
+
+  it("新后端（声明了 latency_window）：延迟恒定的节点不被当成复印件丢掉", () => {
+    const uuid = "steady-node";
+    // 别的站长的截图：三条线路一直 4 ms / 0%，窗口里连着好多格完全一样，原来整段被丢、柱子中间空一截。
+    const steady = windowOf(Array.from({ length: 20 }, () => [4, 4, 4] as [number, number, number]));
+    seedPingHistory(uuid, steady);
+    expect(getPingHistorySnapshot(uuid)).toHaveLength(0);
+
+    // config 晚到：开关一变，手里的窗口按新口径重算，不用等下一次同步。
+    setWindowBackfillGuard(false);
+    expect(getPingHistorySnapshot(uuid)).toHaveLength(20);
+
+    seedPingHistory("another", steady);
+    expect(getPingHistorySnapshot("another")).toHaveLength(20);
   });
 
   it("只丢重复段，末尾真值留着", () => {
