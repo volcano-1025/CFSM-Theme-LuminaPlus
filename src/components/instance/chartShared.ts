@@ -449,28 +449,51 @@ export function useResponsiveChartSize(mode: "grid" | "wide") {
   return { ...size, ref };
 }
 
-/** 可见范围里有效点不超过这么多就把圆点画出来。 */
-const SPARSE_POINT_LIMIT = 20;
+/** 有效数据在横轴上占的宽度不到这么多像素时，线短得看不见，改画圆点。 */
+const SPARSE_SPAN_PX = 24;
+
+const isChartValue = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
 
 /**
- * 数据稀疏时画出数据点，平时只画线。
+ * 线画不出来的地方才画数据点，平时只画线。
  *
  * 新加的节点只有一两分钟数据时，几个点挤在长时间轴的最右边不到 1 像素，又不画点，图上看着是空的
  * （站长 2026-10-09 截图：「12 小时」覆盖 1 分钟，一条线都看不见）；孤立的单点（前后都是断点）也一样画不出线。
+ *
+ * 按「线在屏幕上有多长」判，别按点数判：v1.2.20 预览里是「可见点 ≤ 20 就画」，「实时」档刚进来正好 20 个点，
+ * 每个点都带圈，实时样本一接上超过 20 又全没了（站长 2026-10-10 截图）。
  */
 export const SPARSE_SERIES_POINTS: uPlot.Series.Points = {
   show: (self, seriesIdx, idx0, idx1) => {
     const values = self.data[seriesIdx];
-    if (!values) return false;
-    let count = 0;
+    const times = self.data[0];
+    if (!values || !times) return false;
+    let first = -1;
+    let last = -1;
     for (let index = idx0; index <= idx1; index += 1) {
-      const value = values[index];
-      if (typeof value === "number" && Number.isFinite(value)) {
-        count += 1;
-        if (count > SPARSE_POINT_LIMIT) return false;
-      }
+      if (!isChartValue(values[index])) continue;
+      if (first < 0) first = index;
+      last = index;
     }
-    return count > 0;
+    if (first < 0) return false;
+    if (first === last) return true;
+    const span = Math.abs(self.valToPos(times[last], "x") - self.valToPos(times[first], "x"));
+    return span < SPARSE_SPAN_PX;
+  },
+  // 整条线够长时只补孤立的单点；「断点连线」开着时线会跨过断点接上，不用补。
+  filter: (self, seriesIdx, show) => {
+    if (show) return null;
+    if (self.series[seriesIdx]?.spanGaps === true) return null;
+    const values = self.data[seriesIdx];
+    if (!values) return null;
+    const isolated: number[] = [];
+    for (let index = 0; index < values.length; index += 1) {
+      if (!isChartValue(values[index])) continue;
+      if (isChartValue(values[index - 1]) || isChartValue(values[index + 1])) continue;
+      isolated.push(index);
+    }
+    return isolated.length > 0 ? isolated : null;
   },
   size: 5,
 };
