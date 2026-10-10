@@ -15,6 +15,9 @@ async function bootstrap() {
   ) {
     const { installDevMockApi } = await import("./dev/mockApi");
     installDevMockApi();
+    // mock 没有 WebSocket：只在这里保留快照轮询，线上产物成功加载后不再定时拉 /api/servers。
+    const { setDevSnapshotPolling } = await import("./services/wsStore");
+    setDevSnapshotPolling(true);
   }
 
   createRoot(root).render(

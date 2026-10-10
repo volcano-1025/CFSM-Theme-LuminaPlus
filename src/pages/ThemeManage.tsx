@@ -1708,7 +1708,7 @@ export function ThemeManage() {
                     </span>
                   </div>
                   <div className="surface-inset px-4 py-3 setting-hint">
-                    要更换背景图、站点标题或站点图标，请到 <code>/admin#admin</code> 的外观设置中修改，
+                    要更换背景图、站点标题或站点图标，请到 <code>/admin#/admin</code> 的外观设置中修改，
                     它们对所有主题统一生效。
                   </div>
                 </div>

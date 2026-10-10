@@ -1,12 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
-import { getMe } from "@/services/api";
+import { useMemo } from "react";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
+import { resolveMe } from "@/services/api";
 
+/**
+ * 登录态：从站点配置里读，不单独请求（见 resolveMe）。
+ * 别的标签页登录 / 令牌失效被清时，queryClient 会把配置重拉一次，这里跟着变。
+ */
 export function useAuth() {
-  return useQuery({
-    queryKey: ["me"],
-    queryFn: ({ signal }) => getMe({ signal }),
-    staleTime: 30_000,
-    // 后台在新标签页登录后，返回时必须立即校验。
-    refetchOnWindowFocus: "always",
-  });
+  const config = usePublicConfig();
+  const data = useMemo(() => resolveMe(config.data), [config.data]);
+  return { data, isPending: data === undefined && config.isPending };
 }

@@ -172,6 +172,9 @@ describe("toNodeInfo", () => {
     // 归零的话卡片只会留白，显示不出「免费」。
     expect(toNodeInfo(server({ price: "-1" })).price).toBe(-1);
     expect(toNodeInfo(server({ price: "" })).price).toBe(0);
+    // 显式填的 "0" 和 "-1" 同义（免费），和没填（空串）要分得开。
+    expect(toNodeInfo(server({ price: "0" })).price).toBe(-1);
+    expect(toNodeInfo(server({ price: "0.00" })).price).toBe(-1);
     expect(toNodeInfo(server({ price: "-3" })).price).toBe(0);
   });
 

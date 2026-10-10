@@ -15,6 +15,13 @@ const ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const PING_INTERVAL_MS = 30_000;
 const RECONNECT_BASE_DELAY_MS = 1_000;
 const RECONNECT_MAX_DELAY_MS = 30_000;
+/**
+ * 连续重连这么多次都没连上就停手（1、2、4、8、16、30、30… 秒，合计约 3 分钟）。
+ *
+ * 后端主题规范：重连要指数退避、封顶、限制最大次数。停手后页面保留最后一次数据；用户切到别处再切回来
+ * （wsStore 隐藏时关连接、回来重建）或刷新页面会从头再试。连上过一次就重新计数。
+ */
+export const RECONNECT_MAX_ATTEMPTS = 10;
 /** 服务端因参数非法主动关闭，重连不会有不同结果。 */
 const POLICY_VIOLATION_CLOSE_CODE = 1008;
 
@@ -134,6 +141,11 @@ export function createWsConnection(
 
   function scheduleReconnect() {
     if (closed || reconnectTimer != null) return;
+    if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+      console.warn(`[LuminaPlus] WebSocket 连续 ${RECONNECT_MAX_ATTEMPTS} 次没连上，不再重试：${base}`);
+      closed = true;
+      return;
+    }
     const delay = Math.min(
       RECONNECT_MAX_DELAY_MS,
       RECONNECT_BASE_DELAY_MS * 2 ** Math.min(reconnectAttempts, 5),
@@ -188,8 +200,8 @@ export function createWsConnection(
       setAvailable(false);
       if (closed) return;
       if (event.code === POLICY_VIOLATION_CLOSE_CODE) {
-        // 订阅参数被服务端拒绝，重连只会重复失败，交给轮询兜底。
-        console.warn(`[LuminaPlus] WebSocket 订阅被拒绝 (1008)，已降级为轮询：${base}`);
+        // 订阅参数被服务端拒绝，重连只会重复失败：停手，页面保留已有数据。
+        console.warn(`[LuminaPlus] WebSocket 订阅被拒绝 (1008)，不再重连：${base}`);
         closed = true;
         return;
       }

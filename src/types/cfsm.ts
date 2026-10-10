@@ -665,6 +665,8 @@ export interface PublicConfig {
   version: string;
   latestVersion: string;
   private_site: boolean;
+  /** 这次请求带的令牌后端认不认（`/api/config` 的 `authorization`）。登录态由它推导，见 `resolveMe`。 */
+  authorization: boolean;
   turnstile_enabled: boolean;
   turnstile_site_key: string;
   verified: boolean;

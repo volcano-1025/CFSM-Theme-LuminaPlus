@@ -105,7 +105,7 @@ export function hostAssetUrl(path: string): string {
 
 /** 管理后台固定由内置默认主题接管，第三方主题只能跳转过去。 */
 export function getAdminUrl(): string {
-  return `${getPrimaryApiBase()}/admin#admin`;
+  return `${getPrimaryApiBase()}/admin#/admin`;
 }
 
 // 统一走 window.localStorage：Node 自带的同名全局在没有 --localstorage-file 时不可用，
@@ -131,8 +131,21 @@ export function getJwtToken(): string {
   return readStorage(JWT_STORAGE_KEY);
 }
 
+const jwtTokenClearedListeners = new Set<() => void>();
+
+/** 令牌被清掉（后端回 401）时通知：站点配置里的登录态要跟着重查一次（见 queryClient）。 */
+export function subscribeJwtTokenCleared(listener: () => void): () => void {
+  jwtTokenClearedListeners.add(listener);
+  return () => {
+    jwtTokenClearedListeners.delete(listener);
+  };
+}
+
 export function clearJwtToken(): void {
+  const hadToken = Boolean(readStorage(JWT_STORAGE_KEY));
   writeStorage(JWT_STORAGE_KEY, "");
+  // 真清掉了东西才通知：未登录访客撞 401 不该反复触发重查。
+  if (hadToken) for (const listener of jwtTokenClearedListeners) listener();
 }
 
 export function getTurnstileToken(): string {

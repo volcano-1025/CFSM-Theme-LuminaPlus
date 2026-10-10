@@ -19,6 +19,7 @@ interface FakeConnection {
 const mocks = vi.hoisted(() => ({
   connections: [] as FakeConnection[],
   getServersSnapshot: vi.fn(),
+  getServerSnapshot: vi.fn(),
   /** false 时新建的连接一直停在握手中，不回报可用。 */
   autoOpen: true,
 }));
@@ -54,6 +55,7 @@ vi.mock("@/services/api", async (importOriginal) => {
   return {
     ...actual,
     getServersSnapshot: (...args: unknown[]) => mocks.getServersSnapshot(...args),
+    getServerSnapshot: (...args: unknown[]) => mocks.getServerSnapshot(...args),
   };
 });
 
@@ -94,6 +96,8 @@ beforeEach(() => {
   mocks.connections.length = 0;
   mocks.getServersSnapshot.mockReset();
   mocks.getServersSnapshot.mockImplementation(async () => snapshot());
+  mocks.getServerSnapshot.mockReset();
+  mocks.getServerSnapshot.mockImplementation(async (id: string) => snapshot([id]));
   window.localStorage.clear();
 });
 
@@ -102,21 +106,19 @@ afterEach(() => {
 });
 
 describe("页面进后台", () => {
-  it("disconnects after the grace period, stops polling, and resyncs once on return", async () => {
+  it("disconnects as soon as the page is hidden, and resyncs once on return", async () => {
     const store = await loadStore();
     const release = store.retainStore();
     await vi.advanceTimersByTimeAsync(0);
     expect(mocks.connections).toHaveLength(1);
     expect(store.getStoreStatusSnapshot().realtimeConnected).toBe(true);
 
+    // 后端主题规范：隐藏时立刻关 WS（原来留 30 秒缓冲）。
     setHidden(true);
-    await vi.advanceTimersByTimeAsync(store.HIDDEN_REALTIME_PAUSE_DELAY_MS - 1);
-    expect(mocks.connections[0]!.closed).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
     expect(mocks.connections[0]!.closed).toBe(true);
     expect(store.getStoreStatusSnapshot().realtimeConnected).toBe(false);
 
-    // 后台期间既不重连也不轮询（WS 断了本来会退回 5 秒轮询）。
+    // 后台期间既不重连也不请求。
     const syncsBeforeReturn = syncCount();
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(syncCount()).toBe(syncsBeforeReturn);
@@ -139,7 +141,6 @@ describe("页面进后台", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     setHidden(true);
-    await vi.advanceTimersByTimeAsync(store.HIDDEN_REALTIME_PAUSE_DELAY_MS);
     expect(mocks.connections[0]!.closed).toBe(true);
 
     // 冷的 /api/servers 要好几秒（线上实测 2~8 秒），而探针要等订阅到了才从 60 秒一报提速：
@@ -198,66 +199,72 @@ describe("页面进后台", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(store.getNodeMetricsSnapshot("node-a")?.netDown).toBe(100);
 
-    // 过了重连宽限期还是连不上，就是真连不上：轮询兜底时快照是唯一的数据源，照用。
-    await vi.advanceTimersByTimeAsync(store.WS_RECONNECT_GRACE_MS);
-    expect(store.getNodeMetricsSnapshot("node-a")?.netDown).toBe(9_999);
+    // 一直连不上也不会退回轮询去拿这份旧速率（v1.2.20 起成功加载后不再定时拉 /api/servers）。
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(store.getNodeMetricsSnapshot("node-a")?.netDown).toBe(100);
 
     release();
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  it("does not poll the cached snapshot every 5 seconds while a known-good connection is reconnecting", async () => {
+  it("never fetches /api/servers on a timer once loaded, connected or not", async () => {
     const store = await loadStore();
     const release = store.retainStore();
     await vi.advanceTimersByTimeAsync(0);
+    const afterLoad = syncCount();
 
+    // 连着的时候：原来每 60 秒全量对齐一次。
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(syncCount()).toBe(afterLoad);
+
+    // 切回前台后一直连不上：原来 5 秒轮询兜底，现在只有切回来时补的那一次。
     setHidden(true);
-    await vi.advanceTimersByTimeAsync(store.HIDDEN_REALTIME_PAUSE_DELAY_MS);
     mocks.autoOpen = false;
     setHidden(false);
     await vi.advanceTimersByTimeAsync(0);
     const afterResume = syncCount();
-
-    // 宽限期内只有切回来时补的那一次。
-    await vi.advanceTimersByTimeAsync(store.WS_RECONNECT_GRACE_MS - 1_000);
+    expect(afterResume).toBe(afterLoad + 1);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(syncCount()).toBe(afterResume);
-
-    // 过了宽限期还没连上，退回 5 秒轮询兜底。
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(syncCount()).toBeGreaterThan(afterResume);
 
     release();
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  it("still falls back after 5 seconds on a site whose realtime never connected", async () => {
+  it("keeps polling only when the dev mock asks for it (no WebSocket there)", async () => {
     mocks.autoOpen = false;
     const store = await loadStore();
     const release = store.retainStore();
     await vi.advanceTimersByTimeAsync(0);
-    const afterBootstrap = syncCount();
+    const afterLoad = syncCount();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(syncCount()).toBe(afterLoad);
 
+    store.setDevSnapshotPolling(true);
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(syncCount()).toBeGreaterThan(afterBootstrap);
+    expect(syncCount()).toBeGreaterThan(afterLoad);
+    store.setDevSnapshotPolling(false);
 
     release();
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  it("leaves the connection alone for a quick tab switch inside the grace period", async () => {
+  it("keeps the last online state while realtime is down instead of aging everyone offline", async () => {
     const store = await loadStore();
     const release = store.retainStore();
     await vi.advanceTimersByTimeAsync(0);
-    const syncs = syncCount();
+    expect(store.getNodeMetricsSnapshot("node-a")?.online).toBe(true);
 
     setHidden(true);
-    await vi.advanceTimersByTimeAsync(10_000);
+    mocks.autoOpen = false;
     setHidden(false);
-    await vi.advanceTimersByTimeAsync(store.HIDDEN_REALTIME_PAUSE_DELAY_MS);
-
-    expect(mocks.connections).toHaveLength(1);
-    expect(mocks.connections[0]!.closed).toBe(false);
-    expect(syncCount()).toBe(syncs);
+    // 快照里的 last_updated 也跟着变旧：没有新帧不代表节点离线，只是我们自己没连上。
+    mocks.getServersSnapshot.mockImplementation(async () => ({
+      ...snapshot(),
+      servers: [CfsmServerSchema.parse({ id: "node-a", name: "node-a", last_updated: Date.now() })],
+    }));
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(store.getNodeMetricsSnapshot("node-a")?.online).toBe(true);
 
     release();
     await vi.advanceTimersByTimeAsync(0);
@@ -279,7 +286,7 @@ describe("实时连接时限（frontend_ws_timeout_minutes）", () => {
     // 到时限后：不轮询、不重连，切到后台再切回来也不会静默重连。
     const syncs = syncCount();
     setHidden(true);
-    await vi.advanceTimersByTimeAsync(store.HIDDEN_REALTIME_PAUSE_DELAY_MS + 1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     setHidden(false);
     await vi.advanceTimersByTimeAsync(2 * 60_000);
     expect(mocks.connections).toHaveLength(1);
@@ -322,14 +329,44 @@ describe("详情页只订阅正在看的这一台", () => {
 
     const leave = store.focusRealtimeNode("node-b");
     expect(mocks.connections[0]!.ids).toEqual(["node-b"]);
-    // 60 秒一次的全量同步不会把别的节点加回来。
-    await vi.advanceTimersByTimeAsync(60_000);
+    // 没订阅的 node-a 一直没有新帧：不代表它离线，在详情页期间不改判。
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(mocks.connections[0]!.ids).toEqual(["node-b"]);
+    expect(store.getNodeMetricsSnapshot("node-a")?.online).toBe(true);
 
     leave();
     expect(mocks.connections[0]!.ids).toEqual(["node-a", "node-b"]);
     // 全程同一条连接：没有重连，连接时限的计时也不会被进出详情页重置。
     expect(mocks.connections).toHaveLength(1);
+    // 进详情页、回首页都没有多查 /api/servers（节点表早就有了）。
+    expect(syncCount()).toBe(1);
+    expect(mocks.getServerSnapshot).not.toHaveBeenCalled();
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("loads only that one server when the detail page is opened directly, then the full list back on home", async () => {
+    mocks.getServersSnapshot.mockImplementation(async () => snapshot(["node-a", "node-b"]));
+    const store = await loadStore();
+    // 详情页的两个 effect 在同一次提交里先后跑：先订阅 store，再设焦点。
+    const release = store.retainStore();
+    const leave = store.focusRealtimeNode("node-b");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mocks.getServerSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.getServerSnapshot.mock.calls[0]![0]).toBe("node-b");
+    expect(syncCount()).toBe(0);
+    expect(nodeIds(store)).toEqual(["node-b"]);
+    expect(mocks.connections[0]!.ids).toEqual(["node-b"]);
+
+    // 回首页：节点表只有一台，补那一次全量；补回来之前按没加载完处理。
+    leave();
+    expect(store.getStoreStatusSnapshot().hydrated).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(syncCount()).toBe(1);
+    expect(nodeIds(store)).toEqual(["node-a", "node-b"]);
+    expect(store.getStoreStatusSnapshot().hydrated).toBe(true);
 
     release();
     await vi.advanceTimersByTimeAsync(0);
@@ -403,19 +440,24 @@ describe("快照同步", () => {
       partial: true,
       failedBases: [siteB],
     }));
+    // 切到后台再回来补的那一次快照撞上了 B 站超时（两条连接随隐藏关掉，回来各建一条新的）。
     const syncs = syncCount();
-    await vi.advanceTimersByTimeAsync(60_000);
+    setHidden(true);
+    setHidden(false);
+    await vi.advanceTimersByTimeAsync(0);
     expect(syncCount()).toBe(syncs + 1);
     expect(nodeIds(store)).toEqual(["node-a", "node-b"]);
-    expect(mocks.connections.map((connection) => connection.closed)).toEqual([false, false]);
+    expect(mocks.connections.map((connection) => connection.closed)).toEqual([true, true, false, false]);
     expect(pingLive.getPingHistorySnapshot("node-b")).toHaveLength(1);
     expect(store.getStoreStatusSnapshot().partial).toBe(true);
 
-    // B 站恢复响应、节点确实删了：这一次才去掉。
+    // 有站点没返回时接着重试（不靠定时全量刷新）。B 站恢复响应、节点确实删了：这一次才去掉。
     mocks.getServersSnapshot.mockImplementation(async () => snapshot(["node-a"], siteA));
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(syncCount()).toBeGreaterThan(syncs + 1);
     expect(nodeIds(store)).toEqual(["node-a"]);
-    expect(mocks.connections.map((connection) => connection.closed)).toEqual([false, true]);
+    expect(store.getStoreStatusSnapshot().partial).toBe(false);
+    expect(mocks.connections.map((connection) => connection.closed)).toEqual([true, true, false, true]);
 
     release();
     await vi.advanceTimersByTimeAsync(0);

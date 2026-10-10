@@ -46,6 +46,8 @@ const PENDING_KEY = "cfsm-luminaplus:site-sync-pending";
 function seedConfig(themeSettings: Record<string, unknown> = {}) {
   queryClient.setQueryData<PublicConfig>(["public"], {
     theme_settings: themeSettings,
+    // 令牌后端认：登录态从这份配置推导（resolveMe）。
+    authorization: true,
   } as PublicConfig);
 }
 
@@ -184,7 +186,10 @@ describe("登录站长的改动自动同步到后端", () => {
   });
 
   it("令牌还在但登录校验判成未登录（过期），也不发", async () => {
-    queryClient.setQueryData(["me"], { logged_in: false, username: "", uuid: "" });
+    queryClient.setQueryData<PublicConfig>(["public"], {
+      theme_settings: {},
+      authorization: false,
+    } as PublicConfig);
     stop = startSiteThemeAutoSync();
 
     saveLocalThemeSettings({ desktopNodeViewMode: "compact" });

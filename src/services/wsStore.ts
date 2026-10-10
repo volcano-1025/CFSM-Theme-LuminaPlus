@@ -5,7 +5,8 @@ import type {
   SysConfig,
   TrafficTrendSample,
 } from "@/types/cfsm";
-import { getServersSnapshot, type ServersSnapshot } from "@/services/api";
+import { getServerSnapshot, getServersSnapshot, type ServersSnapshot } from "@/services/api";
+import { hasMultipleApiBases } from "@/services/cfsm/config";
 import {
   emptyNodeMetrics,
   isServerOnline,
@@ -37,7 +38,7 @@ export interface StoreStatusSnapshot {
   failureStreak: number;
   hydrated: boolean;
   nodeInfoError: boolean;
-  /** WebSocket 是否可用；false 表示当前靠轮询兜底。 */
+  /** WebSocket 是否连着；false 时页面保留最后一次数据（在重连、已暂停或已放弃）。 */
   realtimeConnected: boolean;
   /** 多站部署下有后端未返回数据。 */
   partial: boolean;
@@ -83,7 +84,14 @@ interface NodeTrafficTrend {
   };
 }
 
-/** WebSocket 断开时的轮询节奏。 */
+/**
+ * 重试节拍：首屏 `/api/servers` 没成功（或多站有站点没返回）时按它退避重试。
+ *
+ * **成功之后不再定时拉 `/api/servers`**（v1.2.20，后端主题规范的「消耗铁律」：只在首次进入查一次，禁止 setInterval 轮询，
+ * 数值刷新全走 WebSocket）。原来 WS 连着也每 60 秒全量对齐一次、WS 连不上就每 5 秒轮询；现在只剩首次进入和切回前台
+ * 各查一次，WS 连不上由 wsClient 指数退避重连。代价：后台新加 / 删掉的节点、改的名字要切回前台或刷新页面才看得到。
+ * 本地 mock 没有 WebSocket，靠 {@link setDevSnapshotPolling} 保留轮询。
+ */
 const POLL_REFRESH_INTERVAL_MS = 5_000;
 /** 新建的 WebSocket 给一个轮询周期握手，期间不算「连不上」，见 {@link realtimeKnownUnavailable}。 */
 const WS_CONNECT_GRACE_MS = POLL_REFRESH_INTERVAL_MS;
@@ -93,28 +101,18 @@ const WS_CONNECT_GRACE_MS = POLL_REFRESH_INTERVAL_MS;
  * 连上过就说明这个站的实时推送能用，重连慢只是后端冷启动：2026-09-26 从本机连站长站点，握手一次 1.4 秒、一次 6.2 秒，
  * 同日切回前台测到一次 16 秒才有数据。原来这里也只给 5 秒，一超就当成「连不上」：每 5 秒拉一次缓存快照、照单采用它
  * 几十秒前的虚高速率，实时带宽被顶到 5.93 MB/s 又掉回来，站长看到的是「几秒内跳了好几次，然后不动了」。
- * 宽限期内保持现值、不轮询（切回前台已补过一次快照），真连不上才退回兜底。
+ * 宽限期内切回前台补的那份快照不采用速率、保持现值。
  */
 export const WS_RECONNECT_GRACE_MS = 30_000;
-/**
- * WebSocket 正常时仍定期全量对齐，用于捕获元数据变更与节点增删。
- *
- * 后端 `/api/servers` 有服务端缓存（站长口径 30 秒；实测同一份字节至少冻结 24 秒，加随机
- * query 参数也绕不过，说明缓存在 Worker 里而不是 CDN），拉得比缓存周期还密只是拿回同一份。
- */
-const FULL_REFRESH_INTERVAL_MS = 60_000;
 /** 离线是"超过阈值没有上报"，没有事件驱动，只能定时重算。 */
 const ONLINE_RECHECK_INTERVAL_MS = 15_000;
-
 /**
- * 页面进了后台多久之后断开实时连接、暂停轮询。
+ * 重新订阅上（重连、从详情页回首页恢复订阅全站）之后这么久之内，不把节点从在线改判成离线。
  *
- * 后端只要还有一个前端 WebSocket 连着，就让**所有**探针按 `wss_report_interval`（通常 2 秒）上报，
- * 一个都没有时才退回 60 秒以上（MetricsBroadcaster `_getAgentNextWssReportAfterMs`）—— 一个忘在后台的
- * 标签页就能让全站探针一直高频上报，吃的是站长的 Workers / DO 额度。后端文档也要求页面隐藏时主动断开。
- * 不一隐藏就断：来回切标签页每次都要重连、再补一次 `/api/servers`，给个缓冲。
+ * 没订阅的那段时间这些节点收不到帧，`last_updated` 停在原地，一恢复就可能已经「超过 5 分钟没上报」；
+ * 在线的节点恢复订阅后几秒内就有新帧，留这点时间等它，过了还没有才是真离线。
  */
-export const HIDDEN_REALTIME_PAUSE_DELAY_MS = 30_000;
+const ONLINE_RESUBSCRIBE_GRACE_MS = 20_000;
 /** 后台「前端实时连接超时」的上限（分钟），与后端 normalizeFrontendWsTimeoutMinutes 同口径。 */
 const MAX_REALTIME_SESSION_MINUTES = 1440;
 
@@ -246,7 +244,7 @@ export function resolveTrafficTotal(previous: number, raw: number): number {
  *
  * 于是只在两种情况下认这份速率：
  * ① 快照足够新（`last_updated` 在 {@link SNAPSHOT_RATE_MAX_AGE_MS} 内），值还描述得了「现在」；
- * ② WS 已经确定不可用 —— 轮询兜底时它是唯一的数据源，再旧也得用。
+ * ② WS 已经确定不可用 —— 这时快照是手里唯一的数据，再旧也得用（切回前台补的那一次、本地 mock 的轮询）。
  * 其余情况沿用现值（首屏就是 0），等第一帧 WS 补上，实测在 WS 连上后 1 秒内到齐。
  *
  * 累计流量、在线状态不受影响：那些字段不随时间衰减，快照旧一点照样准。
@@ -639,7 +637,7 @@ function sortServers(servers: CfsmServer[]) {
  * WS 是否**已经确定**不可用：建过连接、过了握手宽限期，还是一条都没连上。
  *
  * 首屏（还没建连，`connectionsByBase` 是空的）返回 false —— 那时该等 WS，不是拿快照的
- * 陈旧速率顶上；只有真的连不上、靠 5 秒轮询兜底时，快照才是唯一的数据源。
+ * 陈旧速率顶上；只有真的连不上时，快照才是唯一的数据源。
  * 刚建、还在握手的连接同理：切回前台时连接和快照是同时发出去的，快照先回来很常见
  * （2026-09-13 线上实测快照 1.0 秒、WS 握手 1.4 秒），这时认快照速率，顶部带宽会被旧值顶一下。
  */
@@ -684,14 +682,15 @@ function withUnreachableSiteServers(
   return { servers, baseByServerId };
 }
 
-function syncServers() {
-  syncPromise ??= performServersSync().finally(() => {
+function syncServers(focusUuid: string | null = null) {
+  syncPromise ??= performServersSync(focusUuid).finally(() => {
     syncPromise = null;
   });
   return syncPromise;
 }
 
-async function performServersSync() {
+/** `focusUuid` 给了就只取那一台（见 {@link focusOnlyTarget}），节点表里只会有它。 */
+async function performServersSync(focusUuid: string | null) {
   if (scrollActive) {
     refreshDeferredWhileScrolling = true;
     return;
@@ -700,10 +699,11 @@ async function performServersSync() {
   const controller = new AbortController();
   syncController = controller;
   try {
-    const snapshot = await getServersSnapshot({
-      signal: controller.signal,
-      timeout: SERVERS_REQUEST_TIMEOUT_MS,
-    });
+    const requestOptions = { signal: controller.signal, timeout: SERVERS_REQUEST_TIMEOUT_MS };
+    const snapshot =
+      focusUuid != null
+        ? await getServerSnapshot(focusUuid, requestOptions)
+        : await getServersSnapshot(requestOptions);
     if (controller.signal.aborted) return;
 
     const now = Date.now();
@@ -742,7 +742,7 @@ async function performServersSync() {
       );
       // `/api/servers` 是缓存快照，`last_updated` 常比 WS 推来的样本旧十几到几十秒，而其中的
       // 瞬时速率又明显偏高（线上实测个别节点 REST 24KB/s vs WS 0.8KB/s，合计约 4 倍）。
-      // 每 30 秒一次的全量刷新若照单全收，就会拿这份旧值盖掉新鲜的 WS 实时值，
+      // 切回前台补的快照若照单全收，就会拿这份旧值盖掉新鲜的 WS 实时值，
       // 「实时带宽」于是每半分钟被重新抬高一次再慢慢掉回去。快照不比现值新时，
       // 只取 WS 不下发的字段（月度累计等），实时部分保持现值。
       // 采用快照时另外挡一道瞬时速率：`updatedAt` 的比较只能防住"拿旧值盖新值"，
@@ -819,8 +819,9 @@ async function performServersSync() {
         return Boolean(prev?.hidden) !== Boolean(next?.hidden);
       });
 
-    // 节点被删除后连带清掉它的延迟缓冲区。
-    retainPingNodes(order);
+    // 节点被删除后连带清掉它的延迟缓冲区。只取了一台时节点表不全，不能据此清别的节点的。
+    if (focusUuid == null) retainPingNodes(order);
+    focusOnlyHydrated = focusUuid != null;
 
     const sysConfigChanged = updateSysConfigSnapshot(snapshot.sysConfig);
     const storeStatusChanged =
@@ -1043,7 +1044,7 @@ function resetWsCoalesceState(): void {
   wsDebugLastCommitAt = 0;
 }
 
-/** 实时样本落到已知节点上；未知节点等下一次全量刷新再出现。 */
+/** 实时样本落到已知节点上；未知节点等下一次取快照（切回前台 / 刷新页面）再出现。 */
 function applyWsSamples(samples: WsSample[]) {
   if (samples.length === 0) return;
 
@@ -1089,16 +1090,24 @@ function applyWsSamples(samples: WsSample[]) {
  */
 function refreshOnlineFlags() {
   if (state.order.length === 0) return;
+  // 实时连接没连着时节点的 `last_updated` 不会前进，照它判会把所有节点慢慢判成离线：保持上一次的结论。
+  // （本地 mock 靠轮询，快照自己带在线标记。）
+  if (!realtimeConnected && !devSnapshotPolling) return;
   const now = Date.now();
+  const withinResubscribeGrace = now - subscriptionWidenedAt < ONLINE_RESUBSCRIBE_GRACE_MS;
+  const focusUuid = activeFocusUuid(latestBaseByServerId);
   const touched: string[] = [];
   let nextMetricsByUuid = state.metricsByUuid;
 
   for (const uuid of state.order) {
+    // 详情页只订阅正在看的那一台，别的节点没有新帧，不代表离线。
+    if (focusUuid != null && uuid !== focusUuid) continue;
     const raw = state.rawByUuid[uuid];
     const metrics = state.metricsByUuid[uuid];
     if (!raw || !metrics) continue;
     const online = isServerOnline(raw, now);
     if (online === metrics.online) continue;
+    if (!online && withinResubscribeGrace) continue;
     if (nextMetricsByUuid === state.metricsByUuid) {
       nextMetricsByUuid = { ...state.metricsByUuid };
     }
@@ -1138,14 +1147,19 @@ let connectionsCreatedAt = 0;
 let realtimeLostAt = 0;
 /** 这次打开页面实时连接连上过没有，见 {@link WS_RECONNECT_GRACE_MS}。 */
 let realtimeEverConnected = false;
+/** 最近一次「重新收得到全部订阅节点的帧」的时刻（连上、或从只订阅一台恢复成全站），见 {@link ONLINE_RESUBSCRIBE_GRACE_MS}。 */
+let subscriptionWidenedAt = 0;
+/** 本地 mock 没有 WebSocket：保留快照轮询，不然页面是静止的。只在开发入口打开，线上产物永远是 false。 */
+let devSnapshotPolling = false;
+/** 节点表里现在只有详情页那一台（直接打开详情页时只查了 `/api/server?id=`），回首页要补一次全量。 */
+let focusOnlyHydrated = false;
 
 /** 最近一次快照给出的「节点 → 所属后端」：切换详情页焦点时照它重排订阅，不必等下一次同步。 */
 let latestBaseByServerId = new Map<string, string>();
 /** 详情页正在看的节点：设了就只订阅这一台（后端文档：详情页不要订阅全量再在前端过滤）。 */
 let realtimeFocusUuid: string | null = null;
-/** 页面在后台超过缓冲期：实时连接已断开、轮询已暂停（见 HIDDEN_REALTIME_PAUSE_DELAY_MS）。 */
+/** 页面在后台：实时连接已断开，也不发请求（见 handleVisibilityChange）。 */
 let hiddenPaused = false;
-let hiddenPauseTimer: number | null = null;
 /** 站长设的单次实时连接时长上限（毫秒，0 = 不限），由 RealtimeSessionPrompt 从 `/api/config` 带进来。 */
 let sessionLimitMs = 0;
 /** 本次实时连接从何时开始计时；没有连接时为 0。 */
@@ -1161,9 +1175,18 @@ function realtimePaused(): boolean {
 function setRealtimeConnected(next: boolean) {
   if (realtimeConnected === next) return;
   realtimeConnected = next;
-  if (next) realtimeEverConnected = true;
-  else realtimeLostAt = Date.now();
+  if (next) {
+    realtimeEverConnected = true;
+    subscriptionWidenedAt = Date.now();
+  } else realtimeLostAt = Date.now();
   commit(state, { storeStatus: true });
+}
+
+/** 详情页焦点真正生效的那一台：焦点节点不在节点表里就当没有焦点。 */
+function activeFocusUuid(baseByServerId: ReadonlyMap<string, string>): string | null {
+  return realtimeFocusUuid != null && baseByServerId.has(realtimeFocusUuid)
+    ? realtimeFocusUuid
+    : null;
 }
 
 function updateWsSubscriptions(baseByServerId: Map<string, string>) {
@@ -1173,8 +1196,7 @@ function updateWsSubscriptions(baseByServerId: Map<string, string>) {
   const idsByBase = new Map<string, string[]>();
   // 详情页的节点不在快照里（地址里的 ID 已删掉、访客打开了后台隐藏的节点）就当没有焦点：
   // 按焦点过滤会一台都不剩，所有连接被关掉、计时清零，回首页再重连 —— 正是下面要避免的重置。
-  const focusUuid =
-    realtimeFocusUuid != null && baseByServerId.has(realtimeFocusUuid) ? realtimeFocusUuid : null;
+  const focusUuid = activeFocusUuid(baseByServerId);
   for (const [serverId, base] of baseByServerId) {
     // 详情页只订阅正在看的这一台，推送量从全站降到一台。在同一条连接上改 ids、不重连，
     // 「单次连接」的计时也就不会因为进出详情页被重置。
@@ -1227,7 +1249,7 @@ function closeAllConnections() {
 
 /* ---- 实时连接的暂停与恢复（页面进后台 / 连接到时限） ---- */
 
-// 只在开始计时那一下排定时器：每 60 秒一次的全量同步也会走到这里，每次都重排纯属白忙
+// 只在开始计时那一下排定时器：每次取完快照、改订阅都会走到这里，每次都重排纯属白忙
 // （剩余时长是按开始时刻算的，重排不改变到点时刻）。时限本身变了由 setRealtimeSessionLimitMinutes 重排。
 function startRealtimeSessionClock() {
   if (sessionStartedAt !== 0) return;
@@ -1266,33 +1288,28 @@ function suspendRealtime() {
  * 2026-09-13 线上实测：先快照后连接，切回后 6.4 秒才有数据；连接先走 1.7 秒。快照还测到过 8.3 秒，
  * 超过 SERVERS_REQUEST_TIMEOUT_MS 整次作废，连接要等下一次轮询成功才建。内置主题也是切回来直接重连。
  * 快照回来时 updateWsSubscriptions 在同一条连接上改 ids（节点增删），不重连；快照比实时值旧时
- * performServersSync 只取 WS 不下发的字段。补不上时 5 秒轮询会接着试。
- * **只拉 `/api/servers`，绝不碰 `/api/history/all`** —— 首页硬约束：历史只能由人点刷新触发。
+ * performServersSync 只取 WS 不下发的字段。这一次没补上就等下一次切回前台（首屏还没成功过的由重试节拍接着试）。
+ * **只拉 `/api/servers`（或详情页那一台的 `/api/server`），绝不碰首页的 `/api/history/all`**。
  */
 function resumeRealtime() {
   if (!started || realtimePaused()) return;
   if (latestBaseByServerId.size > 0) updateWsSubscriptions(latestBaseByServerId);
-  lastFullRefreshAt = Date.now();
-  void syncServers().catch(() => {});
+  if (!hydrated) void bootstrap();
+  else void syncCurrentScope().catch(() => {});
 }
 
-function pauseRealtimeForHidden() {
-  hiddenPauseTimer = null;
-  if (!started || hiddenPaused || !document.hidden) return;
-  hiddenPaused = true;
-  suspendRealtime();
-}
-
+/**
+ * 页面一隐藏就断开实时连接（后端主题规范：隐藏时关闭 WS、保留最后一次数据静态展示，重新可见时补一次 REST 再重连）。
+ *
+ * 后端只要还有一个前端 WebSocket 连着，就让**所有**探针按 `wss_report_interval`（通常 2 秒）上报，一个都没有时才退回
+ * 60 秒以上 —— 忘在后台的标签页吃的是站长的 Workers / DO 额度。v1.2.20 前留了 30 秒缓冲，现在照规范立刻断。
+ */
 function handleVisibilityChange() {
   if (document.hidden) {
-    if (!hiddenPaused && hiddenPauseTimer == null) {
-      hiddenPauseTimer = window.setTimeout(pauseRealtimeForHidden, HIDDEN_REALTIME_PAUSE_DELAY_MS);
-    }
+    if (!started || hiddenPaused) return;
+    hiddenPaused = true;
+    suspendRealtime();
     return;
-  }
-  if (hiddenPauseTimer != null) {
-    window.clearTimeout(hiddenPauseTimer);
-    hiddenPauseTimer = null;
   }
   if (!hiddenPaused) return;
   hiddenPaused = false;
@@ -1328,17 +1345,32 @@ export function resumeRealtimeSession(): void {
 
 /**
  * 详情页进来时调用：实时订阅收窄到这一台，返回的函数在离开时恢复订阅全站。
- * 已有快照就立刻重排；还没同步过的话，第一次同步会按焦点建订阅。别的节点的在线状态靠
- * 60 秒一次的全量同步维持，不会因为收窄订阅而误判离线。
+ * 已有快照就立刻重排；还没同步过的话，第一次同步只取这一台（见 focusOnlyTarget）并按焦点建订阅。
+ * 别的节点这期间收不到帧，在线标记保持不动（见 refreshOnlineFlags），回首页恢复订阅后再判。
  */
 export function focusRealtimeNode(uuid: string): () => void {
   if (!uuid) return () => undefined;
   realtimeFocusUuid = uuid;
-  if (started) updateWsSubscriptions(latestBaseByServerId);
+  if (started) {
+    updateWsSubscriptions(latestBaseByServerId);
+    // 节点表里只有上一台（直接打开详情页进来的），换到别的节点要单独取它。
+    if (focusOnlyHydrated && !realtimePaused() && !state.rawByUuid[uuid]) {
+      void syncCurrentScope().catch(() => {});
+    }
+  }
   return () => {
     if (realtimeFocusUuid !== uuid) return;
     realtimeFocusUuid = null;
-    if (started) updateWsSubscriptions(latestBaseByServerId);
+    if (!started) return;
+    if (focusOnlyHydrated) {
+      // 回到要全站数据的页面：节点表只有一台，按没同步过处理，补那一次全量（首页先显示加载态而不是只有一张卡）。
+      hydrated = false;
+      commit(state, { storeStatus: true });
+      if (!realtimePaused()) void bootstrap();
+      return;
+    }
+    subscriptionWidenedAt = Date.now();
+    updateWsSubscriptions(latestBaseByServerId);
   };
 }
 
@@ -1364,9 +1396,26 @@ function bootstrap(): Promise<void> {
   return bootstrapPromise;
 }
 
+/**
+ * 这次同步只取详情页那一台（`/api/server?id=`）还是全站（`/api/servers`）。
+ *
+ * 后端主题规范：详情页查单台，不要为一台拉全站。只在「直接打开详情页、节点表还是空的 / 只有上一台」时走单台；
+ * 从首页点进来的已经有全站数据，不用再查。多后端部署不知道这台在哪个站，照旧拉全站。
+ */
+function focusOnlyTarget(): string | null {
+  if (realtimeFocusUuid == null || hasMultipleApiBases()) return null;
+  return !hydrated || focusOnlyHydrated ? realtimeFocusUuid : null;
+}
+
+function syncCurrentScope() {
+  return syncServers(focusOnlyTarget());
+}
+
 async function runBootstrap() {
   try {
-    await syncServers();
+    await syncCurrentScope();
+    // 多站里有站点没返回：算没成功，接着退避重试（原来靠 60 秒全量刷新补，现在没有了）。
+    if (partialSites) throw new Error("partial snapshot");
     bootstrapBackoffTicks = 0;
     bootstrapSkipTicks = 0;
   } catch {
@@ -1382,9 +1431,12 @@ let started = false;
 let retainCount = 0;
 let stopTimer: number | null = null;
 let pollTimer: number | null = null;
-let fullRefreshTimer: number | null = null;
 let onlineTimer: number | null = null;
-let lastFullRefreshAt = 0;
+
+/** 本地 mock 用：没有 WebSocket，保留快照轮询。 */
+export function setDevSnapshotPolling(enabled: boolean): void {
+  devSnapshotPolling = enabled;
+}
 
 function ensureStarted() {
   if (started) return;
@@ -1392,14 +1444,18 @@ function ensureStarted() {
 
   ensureScrollTrackingStarted();
   document.addEventListener("visibilitychange", handleVisibilityChange);
-  // 在后台标签页里打开（比如中键新开）时不会触发 visibilitychange，照样开始计缓冲期。
+  // 在后台标签页里打开（比如中键新开）时不会触发 visibilitychange：按隐藏处理，切到前台再取数。
   if (document.hidden) handleVisibilityChange();
-  void bootstrap();
+  // 等这一轮 effect 都跑完再决定取哪一份：详情页的焦点（focusRealtimeNode）和它是同一次提交里先后设的。
+  queueMicrotask(() => {
+    if (started && !realtimePaused() && !hydrated) void bootstrap();
+  });
 
   pollTimer = window.setInterval(() => {
     // 后台暂停 / 连接到时限期间一律不打后端：`/api/servers` 本身也会让后端把前端标成「正在看」。
     if (realtimePaused()) return;
-    if (!hydrated) {
+    // 只在还没拿到完整节点表时重试；成功之后不再定时拉（见 POLL_REFRESH_INTERVAL_MS）。
+    if (!hydrated || partialSites) {
       if (bootstrapSkipTicks > 0) {
         bootstrapSkipTicks -= 1;
         return;
@@ -1407,20 +1463,8 @@ function ensureStarted() {
       void bootstrap();
       return;
     }
-    // WebSocket 正常推送时不需要轮询，交给全量刷新定时器。重连还在宽限期里也不轮询：
-    // `/api/servers` 是缓存快照，速率这时本来就不采用，5 秒拉一次只是白读（见 WS_RECONNECT_GRACE_MS）。
-    if (realtimeConnected) return;
-    if (realtimeEverConnected && realtimeWaiting() && realtimeWithinGrace()) return;
-    void syncServers().catch(() => {});
+    if (devSnapshotPolling && !realtimeConnected) void syncCurrentScope().catch(() => {});
   }, POLL_REFRESH_INTERVAL_MS);
-
-  fullRefreshTimer = window.setInterval(() => {
-    if (!hydrated || realtimePaused()) return;
-    const now = Date.now();
-    if (now - lastFullRefreshAt < FULL_REFRESH_INTERVAL_MS) return;
-    lastFullRefreshAt = now;
-    void syncServers().catch(() => {});
-  }, FULL_REFRESH_INTERVAL_MS);
 
   onlineTimer = window.setInterval(refreshOnlineFlags, ONLINE_RECHECK_INTERVAL_MS);
 }
@@ -1456,16 +1500,13 @@ function stopStore() {
   closeAllConnections();
   resetWsCoalesceState();
   document.removeEventListener("visibilitychange", handleVisibilityChange);
-  if (hiddenPauseTimer != null) window.clearTimeout(hiddenPauseTimer);
-  hiddenPauseTimer = null;
   hiddenPaused = false;
   sessionExpired = false;
   latestBaseByServerId = new Map();
-  for (const timer of [pollTimer, fullRefreshTimer, onlineTimer]) {
+  for (const timer of [pollTimer, onlineTimer]) {
     if (timer != null) window.clearInterval(timer);
   }
   pollTimer = null;
-  fullRefreshTimer = null;
   onlineTimer = null;
   if (scrollIdleTimer != null) {
     window.clearTimeout(scrollIdleTimer);
@@ -1480,8 +1521,8 @@ function stopStore() {
   hydrated = false;
   nodeInfoError = false;
   partialSites = false;
+  focusOnlyHydrated = false;
   started = false;
-  lastFullRefreshAt = 0;
   bootstrapBackoffTicks = 0;
   bootstrapSkipTicks = 0;
 }

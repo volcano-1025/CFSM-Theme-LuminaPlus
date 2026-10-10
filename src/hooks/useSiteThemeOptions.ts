@@ -3,7 +3,7 @@ import { pickPaletteSettings } from "@/hooks/useMetricColors";
 import { useAllPingLineOverrides } from "@/hooks/usePingOverview";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useLocalThemeSettings } from "@/hooks/useThemeSettings";
-import { getPublic, saveThemeOptions } from "@/services/api";
+import { getPublic, resolveMe, saveThemeOptions } from "@/services/api";
 import { getJwtToken } from "@/services/cfsm/config";
 import {
   clearPingLineOverrides,
@@ -16,7 +16,7 @@ import {
   resetLocalThemeSettings,
   subscribeLocalThemeSettingsEdits,
 } from "@/services/themeSettingsStore";
-import type { Me, PublicConfig, ThemeSettings } from "@/types/cfsm";
+import type { PublicConfig, ThemeSettings } from "@/types/cfsm";
 import {
   EMPTY_PING_LINE_OVERRIDES_BY_NODE,
   mergePingLineOverridesByNode,
@@ -161,21 +161,20 @@ function readSyncPending(): boolean {
 }
 
 /**
- * 这台设备的改动要不要自动同步到后端：有令牌，且登录校验（`["me"]`）没判成未登录。
+ * 这台设备的改动要不要自动同步到后端：有令牌，且站点配置（`authorization`）没判成未登录。
  * 光看令牌不够：令牌过期的老访客每改一次颜色都会撞一次 401。
  */
 export function canSyncSiteTheme(): boolean {
   if (!getJwtToken()) return false;
-  return queryClient.getQueryData<Me>(["me"])?.logged_in !== false;
+  return resolveMe(queryClient.getQueryData<PublicConfig>(["public"]))?.logged_in !== false;
 }
 
 /** 设置页、取色器判断「登录站长」用，与自动同步同口径；随登录校验结果更新。 */
 export function useCanSyncSiteTheme(): boolean {
-  const me = useSyncExternalStore(
+  return useSyncExternalStore(
     (listener) => queryClient.getQueryCache().subscribe(listener),
-    () => queryClient.getQueryData<Me>(["me"]),
+    canSyncSiteTheme,
   );
-  return Boolean(getJwtToken()) && me?.logged_in !== false;
 }
 
 function scheduleSync(delayMs: number) {
