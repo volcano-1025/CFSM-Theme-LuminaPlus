@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bucketPingLoss,
+  resolveLossCellSpans,
   formatPingTooltipValue,
   resolvePingSampleCounts,
 } from "@/utils/pingMetrics";
@@ -64,5 +65,34 @@ describe("bucketPingLoss", () => {
     // resolvePingSampleCounts 把「一次采样丢 33%」保留成小数，聚合后不该被抹成 0 或 100。
     const counts = resolvePingSampleCounts({ value: 42, count: 1, loss: 33 });
     expect(bucketPingLoss([{ time: 0, ...counts }], [0])).toEqual([33]);
+  });
+});
+
+describe("resolveLossCellSpans", () => {
+  it("meets neighbours at the midpoint so the strip has no seams", () => {
+    expect(resolveLossCellSpans([0, 60, 120], [0, 10, 0])).toEqual([
+      [-30, 30],
+      [30, 90],
+      [90, 150],
+    ]);
+  });
+
+  it("does not paint back into an outage", () => {
+    // 站长 2026-10-10 的 Fachost-tw：18:16:35 之后断了 140 分钟，20:36:54 恢复；中间是折线的断点哨兵（没有丢包值）。
+    const lastBefore = 0;
+    const sentinel = 90;
+    const firstAfter = 140 * 60;
+    const times = [-180, -90, lastBefore, sentinel, firstAfter, firstAfter + 90, firstAfter + 180];
+    const spans = resolveLossCellSpans(times, [0, 0, 33, null, 0, 0, 16]);
+
+    expect(spans[3]).toBeNull();
+    // 断档前最后一格、断档后第一格，朝断档那一侧都只占半个点距（45 秒），不是涂到中点。
+    expect(spans[2]).toEqual([-45, 45]);
+    expect(spans[4]).toEqual([firstAfter - 45, firstAfter + 45]);
+  });
+
+  it("keeps a lone sample narrow", () => {
+    expect(resolveLossCellSpans([100], [50])).toEqual([[100, 100]]);
+    expect(resolveLossCellSpans([0, 60, 4000], [null, null, 5])).toEqual([null, null, [3970, 4030]]);
   });
 });

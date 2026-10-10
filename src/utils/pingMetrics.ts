@@ -67,6 +67,41 @@ export function bucketPingLoss(
   return out;
 }
 
+/**
+ * 丢包色带上每一格在时间轴上占的范围 `[起, 止]`；没有采样的格是 null。
+ *
+ * 相邻两格都有数据时各占到中点，中间不留缝。**旁边那格没数据（断档、数组两端）时最多只占半个常规点距**：
+ * 原来一律占到中点，节点断了两个多小时再恢复，恢复后第一格会往回涂满断档的后一半 —— 站长 2026-10-10 截图：
+ * 18:16 到 20:36 没有数据，色带却从 19:30 左右就是绿的，下面折线 20:38 才开始。
+ */
+export function resolveLossCellSpans(
+  times: number[],
+  loss: Array<number | null>,
+): Array<[number, number] | null> {
+  const gaps: number[] = [];
+  for (let index = 1; index < times.length; index += 1) {
+    const gap = times[index] - times[index - 1];
+    if (gap > 0) gaps.push(gap);
+  }
+  gaps.sort((left, right) => left - right);
+  // 取偏小的那个中位数：只有两三个间隔、其中一个是断档时，别让断档本身成了「常规点距」。
+  const half = (gaps[Math.floor((gaps.length - 1) / 2)] ?? 0) / 2;
+
+  const reach = (time: number, neighbor: number | undefined, neighborHasData: boolean) => {
+    if (neighbor == null) return half;
+    const toMidpoint = Math.abs(neighbor - time) / 2;
+    return neighborHasData ? toMidpoint : Math.min(toMidpoint, half);
+  };
+
+  return times.map((time, index) => {
+    if (loss[index] == null) return null;
+    return [
+      time - reach(time, times[index - 1], loss[index - 1] != null),
+      time + reach(time, times[index + 1], loss[index + 1] != null),
+    ];
+  });
+}
+
 /** 丢包百分比：不足 1% 时保留一位小数，否则取整，免得每行都拖着 0.0%。 */
 export function formatPingLoss(pct: number) {
   return pct > 0 && pct < 1 ? `${pct.toFixed(1)}%` : `${Math.round(pct)}%`;

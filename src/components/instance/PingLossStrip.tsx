@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { lossHeatColor } from "@/utils/metricTone";
+import { resolveLossCellSpans } from "@/utils/pingMetrics";
 
 /**
  * Ping 图下方的丢包色带。
@@ -9,7 +10,8 @@ import { lossHeatColor } from "@/utils/metricTone";
  * 同宽的槽位放线路名，右边留出与主图相同的内边距，时间→像素用主图同一个 x 区间换算。
  *
  * 色阶与首页卡片、迷你卡共用 lossHeatColor（0% 绿 → 20%+ 红）。
- * 没有采样的时段不画，露出底色轨道 —— 掉线和「丢包 0%」必须看得出区别。
+ * 没有采样的时段不画，露出底色轨道 —— 掉线和「丢包 0%」必须看得出区别；
+ * 断档两侧的格子不往断档里涂（`resolveLossCellSpans`）。
  */
 
 const ROW_HEIGHT = 6;
@@ -122,14 +124,14 @@ function LossRowCanvas({
     }
     const toX = (time: number) => ((time - t0) / span) * width;
 
+    // 相邻格各占到中点、不留缝；挨着断档的那一侧只占半个点距（见 resolveLossCellSpans）。
+    const spans = resolveLossCellSpans(times, loss);
     for (let index = 0; index < times.length; index += 1) {
       const value = loss[index];
-      if (value == null) continue;
-      // 每格覆盖到与前后邻点的中点，相邻格之间不留缝。
-      const prev = times[index - 1] ?? times[index] - (times[index + 1] - times[index] || 0);
-      const next = times[index + 1] ?? times[index] + (times[index] - times[index - 1] || 0);
-      const left = Math.max(0, toX((prev + times[index]) / 2));
-      const right = Math.min(width, toX((times[index] + next) / 2));
+      const span = spans[index];
+      if (value == null || !span) continue;
+      const left = Math.max(0, toX(span[0]));
+      const right = Math.min(width, toX(span[1]));
       const barWidth = Math.max(1, right - left);
       if (right <= 0 || left >= width) continue;
       ctx.fillStyle = lossHeatColor(value);
