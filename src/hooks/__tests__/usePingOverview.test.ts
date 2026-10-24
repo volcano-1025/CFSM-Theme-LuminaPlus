@@ -3,6 +3,7 @@ import {
   buildPingBuckets,
   HOMEPAGE_PING_BUCKET_COUNT,
   buildPingOverviewItem,
+  lossFromBuckets,
   resolveHomepagePingRequestMode,
   withLiveLatency,
 } from "@/hooks/usePingOverview";
@@ -462,5 +463,36 @@ describe("withLiveLatency", () => {
   it("值没变就返回原对象，不白白触发重渲染", () => {
     expect(withLiveLatency(item, live({ ct: 30 }), 1)).toBe(item);
     expect(withLiveLatency(item, null, 1)).toBe(item);
+  });
+});
+
+describe("lossFromBuckets", () => {
+  it("只算柱子覆盖到的时段：缓冲区里柱子外面的丢包不进卡片上的数字", () => {
+    // 窗口钉 2 小时，缓冲区多留 15 分钟；丢包只发生在那 15 分钟里（站长 2026-10-24：4.3% 发黄、柱子全绿）。
+    const samples = [134, 130, 126]
+      .map((minutesAgo) => sample(minutesAgo, { ct: 40, lossCt: 30 }))
+      .concat([sample(122, { ct: 40, lossCt: 0 })])
+      .concat(Array.from({ length: 20 }, (_, index) => sample(114 - index * 6, { ct: 40, lossCt: 0 })));
+    const item = buildPingOverviewItem("node-a", 1, samples);
+    const buckets = buildPingBuckets(item, HOMEPAGE_PING_BUCKET_COUNT, NOW, null, 2 * HOUR_MS);
+
+    expect(item.loss).toBeGreaterThan(3);
+    expect(Math.max(...buckets.map((bucket) => bucket.loss ?? 0))).toBe(0);
+    expect(lossFromBuckets(buckets)).toBe(0);
+  });
+
+  it("按每格样本份数加权，没有样本的格子不参与", () => {
+    const bucket = (loss: number | null, total: number) => ({
+      index: 0,
+      value: 40,
+      loss,
+      total,
+      lost: 0,
+      startAt: null,
+      endAt: null,
+    });
+
+    expect(lossFromBuckets([bucket(10, 3), bucket(0, 1), bucket(null, 0)])).toBeCloseTo(7.5, 5);
+    expect(lossFromBuckets([bucket(null, 0)])).toBeNull();
   });
 });
