@@ -492,7 +492,9 @@ export function buildPingBuckets(
   offlineSince?: number | null,
   windowMs?: number,
 ): PingOverviewBucket[] {
-  const offlineAt = resolveOfflineSince(offlineSince);
+  // 掉线分界取节点最后的样本时间；时钟快的节点这个时间在将来（站长 2026-10-26 PQS-tw 快了近 8 小时），不夹住就一格红的都没有。
+  const resolvedOfflineAt = resolveOfflineSince(offlineSince);
+  const offlineAt = resolvedOfflineAt == null ? null : Math.min(resolvedOfflineAt, now);
   const totalWindowMs = resolvePingWindowMs(ping, offlineAt, now, windowMs);
   const requestedCount = count ?? HOMEPAGE_PING_BUCKET_COUNT;
   const boundedRequestedCount =

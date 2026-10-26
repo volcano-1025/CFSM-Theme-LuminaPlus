@@ -27,6 +27,9 @@ const GIB = 1024 * 1024 * 1024;
 /** 与后端 `/api/servers` 聚合统计一致的在线判定阈值。 */
 export const ONLINE_THRESHOLD_MS = 300_000;
 
+/** 样本时间比现在晚超过这么多，就不拿它判在线（节点时钟快了，见 {@link isServerOnline}）。 */
+const FUTURE_SAMPLE_TOLERANCE_MS = 60_000;
+
 /**
  * 各条线路的默认显示名。站长可以在后端改名（`/api/config` 的 `custom_ct_name`、`node_1_name` 等，
  * 后端后加的字段），老后端不下发时就用这里的默认值 —— 所以线路的 id / key 是固定的，
@@ -303,12 +306,17 @@ export function parsePrice(value: unknown): number {
  *
  * 不照内置主题只认上报时刻：本主题的上报时刻会跨快照沿用（见 wsStore `performServersSync`），页面隐藏十分钟再回来，
  * 快照里没带这台的上报时刻时，沿用的旧值会把样本时间明明很新的节点判成掉线。
+ *
+ * 反过来，时钟快的节点样本时间落在将来，不能拿来判在线：站长 2026-10-26 的 PQS-tw 开机时时钟快了 7 小时 44 分，
+ * 上报一次就关机维护，样本时间是当天 17:33，按「5 分钟内」它要到 17:38 才算掉线。比现在晚超过一分钟的样本时间不认，
+ * 这时只看上报时刻（时钟快、但还在上报的节点，快照和 WS 都会带上报时刻，照样在线）。
  */
 export function isServerOnline(server: CfsmServer, now = Date.now()): boolean {
   if (typeof server.is_online === "boolean") return server.is_online;
+  const sampledAt = normalizeTimestamp(server.last_updated || server.timestamp);
   const lastSeen = Math.max(
     normalizeTimestamp(server.report_timestamp ?? 0),
-    normalizeTimestamp(server.last_updated || server.timestamp),
+    sampledAt > now + FUTURE_SAMPLE_TOLERANCE_MS ? 0 : sampledAt,
   );
   return lastSeen > 0 && now - lastSeen < ONLINE_THRESHOLD_MS;
 }

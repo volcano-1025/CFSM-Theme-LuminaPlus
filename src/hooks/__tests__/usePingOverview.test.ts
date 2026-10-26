@@ -496,3 +496,14 @@ describe("lossFromBuckets", () => {
     expect(lossFromBuckets([bucket(null, 0)])).toBeNull();
   });
 });
+
+describe("buildPingBuckets 掉线分界", () => {
+  it("掉线分界落在将来（节点时钟快）时按现在算，不会一格都不红", () => {
+    const samples = Array.from({ length: 20 }, (_, index) => sample(114 - index * 6, { ct: 40, lossCt: 0 }));
+    const item = buildPingOverviewItem("node-a", 1, samples);
+    const future = buildPingBuckets(item, HOMEPAGE_PING_BUCKET_COUNT, NOW, NOW + 7.7 * HOUR_MS, 2 * HOUR_MS);
+    const atNow = buildPingBuckets(item, HOMEPAGE_PING_BUCKET_COUNT, NOW, NOW, 2 * HOUR_MS);
+
+    expect(future).toEqual(atNow);
+  });
+});

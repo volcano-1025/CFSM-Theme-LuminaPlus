@@ -588,7 +588,9 @@ export function LoadChart({
   );
 
   useEffect(() => {
-    if (!active || !node) return;
+    // 掉线的节点不再接实时点：快照里那份是最后一次上报，时钟快的节点它还落在将来，
+    // 会让「实时」档只剩一个将来的点（站长 2026-10-26：PQS-tw 关机后详情页显示「覆盖 17:33 - 17:33」）。
+    if (!active || !node || node.online === false) return;
     const now = Date.now();
     const sinceLast = lastSampleAtRef.current > 0 ? now - lastSampleAtRef.current : 0;
     lastSampleAtRef.current = now;

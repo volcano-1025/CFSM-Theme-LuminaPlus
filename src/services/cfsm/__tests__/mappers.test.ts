@@ -217,6 +217,21 @@ describe("toNodeMetrics", () => {
     expect(toNodeMetrics(stale, NOW).online).toBe(false);
   });
 
+  it("does not keep a node online because its clock is ahead", () => {
+    // 站长 2026-10-26：PQS-tw 开机时时钟快了 7 小时 44 分，上报一次就关机，样本时间落在将来。
+    const fastClockGone = server({ last_updated: NOW + 7.7 * 3_600_000, timestamp: NOW + 7.7 * 3_600_000 });
+    expect(isServerOnline(fastClockGone, NOW)).toBe(false);
+
+    // 时钟快但还在上报：上报时刻是新的，照样在线；快几秒的正常抖动也不受影响。
+    const fastClockAlive = server({
+      last_updated: NOW + 7.7 * 3_600_000,
+      timestamp: NOW + 7.7 * 3_600_000,
+      report_timestamp: NOW - 2_000,
+    });
+    expect(isServerOnline(fastClockAlive, NOW)).toBe(true);
+    expect(isServerOnline(server({ last_updated: NOW + 5_000, timestamp: NOW + 5_000 }), NOW)).toBe(true);
+  });
+
   it("judges online by when the backend heard from the node, not by the node's own clock", () => {
     // 站长 2026-10-10：一台节点时钟慢 321 秒，样本时间永远「超过 5 分钟」，但后端一直在收它的上报。
     const slowClock = server({
