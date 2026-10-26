@@ -27,8 +27,8 @@ const GIB = 1024 * 1024 * 1024;
 /** 与后端 `/api/servers` 聚合统计一致的在线判定阈值。 */
 export const ONLINE_THRESHOLD_MS = 300_000;
 
-/** 样本时间比现在晚超过这么多，就不拿它判在线（节点时钟快了，见 {@link isServerOnline}）。 */
-const FUTURE_SAMPLE_TOLERANCE_MS = 60_000;
+/** 样本时间比现在晚超过这么多就不认：不拿它判在线（{@link isServerOnline}），历史里也丢掉（api `requestHistoryRows`）。 */
+export const FUTURE_SAMPLE_TOLERANCE_MS = 60_000;
 
 /**
  * 各条线路的默认显示名。站长可以在后端改名（`/api/config` 的 `custom_ct_name`、`node_1_name` 等，

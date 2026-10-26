@@ -487,6 +487,22 @@ describe("getLoadRecords", () => {
     expect(intervalSeconds).toBe(60);
   });
 
+  it("drops rows stamped in the future by a node whose clock ran ahead", async () => {
+    // 站长 2026-10-26：PQS-tw 重启后时钟快了 8 小时，最后一次上报存成了当天 17:33。
+    const now = Date.now();
+    fetchMock.mockImplementation(
+      jsonReply([
+        historyRow({ timestamp: now - 60_000 }),
+        historyRow({ timestamp: now + 8 * 3_600_000 }),
+        historyRow({ timestamp: now + 5_000 }),
+      ]),
+    );
+
+    const { records } = await getLoadRecords("node-a", 1);
+
+    expect(records.map((record) => record.time)).toEqual([now - 60_000, now + 5_000]);
+  });
+
   it("requests a backend-supported hours value", async () => {
     fetchMock.mockImplementation(jsonReply([]));
 

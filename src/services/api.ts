@@ -32,7 +32,9 @@ import {
   historyRowToLoadRecord,
   historyRowsToPingRecords,
   historyRowsToPingSamples,
+  FUTURE_SAMPLE_TOLERANCE_MS,
   inferIntervalSeconds,
+  normalizeTimestamp,
   toNodeInfo,
   withReportTimestamp,
 } from "@/services/cfsm/mappers";
@@ -432,8 +434,13 @@ async function requestHistoryRows(
     ...options,
     base: options?.base ?? getServerApiBase(serverId),
   });
+  // 历史行的时间是探针按节点自己的时钟打的。时钟快了的那几行落在将来，画出来只剩一个对不上的点、横轴也被撑歪，
+  // 丢掉（站长 2026-10-26：PQS-tw 重启后时钟跳快 8 小时，09:33 那次上报存成了 17:33，关机后详情页「覆盖 17:33 - 17:33」）。
+  const latest = Date.now() + FUTURE_SAMPLE_TOLERANCE_MS;
   // 后端按时间倒序或正序都可能，图表要求升序。
-  return [...rows].sort((left, right) => left.timestamp - right.timestamp);
+  return rows
+    .filter((row) => normalizeTimestamp(row.timestamp) <= latest)
+    .sort((left, right) => left.timestamp - right.timestamp);
 }
 
 /**
