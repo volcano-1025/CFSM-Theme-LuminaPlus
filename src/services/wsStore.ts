@@ -9,6 +9,7 @@ import { getServerSnapshot, getServersSnapshot, type ServersSnapshot } from "@/s
 import { hasMultipleApiBases } from "@/services/cfsm/config";
 import {
   emptyNodeMetrics,
+  FUTURE_SAMPLE_TOLERANCE_MS,
   isServerOnline,
   mergeServerPatch,
   withReportTimestamp,
@@ -756,7 +757,7 @@ async function performServersSync(focusUuid: string | null) {
         realtimeKnownUnavailable(),
       );
       const nextMetrics =
-        previousMetrics && previousMetrics.updatedAt > restMetrics.updatedAt
+        previousMetrics && previousMetrics.updatedAt > comparableSampleTs(restMetrics.updatedAt, now)
           ? {
               ...previousMetrics,
               online: restMetrics.online,
@@ -993,6 +994,17 @@ function runWsTick(): void {
 }
 
 /**
+ * 拿来比新旧的样本时间：落在将来（节点时钟快了）的当作没有。
+ *
+ * 站长 2026-10-26：PQS-tw 重启后时钟跳快 8 小时、上报了一次 17:33 的样本，后端从此把它当成「最新」，
+ * `/api/servers` 一直下发这份；节点恢复正常后 WS 推来的 12:34 都比它「旧」，被下面两道「别倒回旧帧」的闸全挡掉，
+ * 卡片停在关机前的数值一动不动，要等到真到了 17:33 才会恢复。
+ */
+export function comparableSampleTs(ts: number, now: number): number {
+  return ts > now + FUTURE_SAMPLE_TOLERANCE_MS ? 0 : ts;
+}
+
+/**
  * WS 推送入口：按节点入队，并实测每台节点自己的到达节奏；
  * 由 {@link runWsTick} 按各自节奏把帧匀速放出，快的节点放得密、慢的放得疏，各自都匀速。
  */
@@ -1004,7 +1016,10 @@ function enqueueWsSamples(samples: WsSample[]): void {
     const serverId = sample.serverId;
     const ts = normalizeTimestamp(sample.ts);
     // 不把已显示（REST 首屏或已提交过）的节点倒回更旧的帧。
-    const shownTs = normalizeTimestamp(state.rawByUuid[serverId]?.last_updated ?? 0);
+    const shownTs = comparableSampleTs(
+      normalizeTimestamp(state.rawByUuid[serverId]?.last_updated ?? 0),
+      now,
+    );
     if (ts > 0 && ts <= shownTs) continue;
 
     let pending = wsPendingByServer.get(serverId);

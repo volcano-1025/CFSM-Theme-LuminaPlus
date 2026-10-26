@@ -4,6 +4,7 @@ import {
   resolveTrafficTotal,
   resolveWsNodeIntervalMs,
   shouldTrustSnapshotRate,
+  comparableSampleTs,
 } from "@/services/wsStore";
 
 // 像 resolveTrafficTotals 每个 tick 那样,把一串原始累计读数喂给 resolver:把上一个显示值
@@ -141,5 +142,19 @@ describe("shouldTrustSnapshotRate", () => {
   it("treats a missing timestamp as unusable rather than fresh", () => {
     // last_updated 缺失时 now - 0 是个巨大的年龄，不能当成"刚刚"。
     expect(shouldTrustSnapshotRate(Number.NaN, false)).toBe(false);
+  });
+});
+
+describe("comparableSampleTs", () => {
+  const NOW = Date.UTC(2026, 9, 26, 4, 34);
+
+  it("treats a sample stamped hours in the future as unknown, so newer real frames are not dropped", () => {
+    // 站长 2026-10-26：PQS-tw 时钟跳快 8 小时留下一个 17:33 的样本，恢复后 12:34 的帧全被当成「更旧」挡掉。
+    expect(comparableSampleTs(NOW + 5 * 3_600_000, NOW)).toBe(0);
+  });
+
+  it("keeps ordinary timestamps, including a few seconds of clock skew", () => {
+    expect(comparableSampleTs(NOW - 30_000, NOW)).toBe(NOW - 30_000);
+    expect(comparableSampleTs(NOW + 5_000, NOW)).toBe(NOW + 5_000);
   });
 });
