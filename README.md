@@ -37,9 +37,9 @@
 没切换过就按后台「外观设置 → 默认语言」，选「自动」时按浏览器语言（西语、中文以外显示英文）。
 节点名、分组、标签、线路名是后台填的，原样显示。
 
-### 搭配 Egern 小组件（可选）
+### 搭配 iOS 小组件（可选）
 
-用 Egern 的话，有个配套的 iOS 主屏小组件 [cfsm-egern-widget](https://github.com/volcano-1025/cfsm-egern-widget)，
+有个配套的 iOS 主屏小组件 [cfsm-widget](https://github.com/volcano-1025/cfsm-widget)，**Egern** 和 **Scriptable** 都能装，
 和本主题互不依赖。
 
 ## 主题设置
