@@ -1946,13 +1946,13 @@ body::after {
   position: absolute;
   z-index: 5;
   min-width: 132px;
-  max-width: 220px;
+  max-width: 260px;
   pointer-events: none;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   box-shadow: 0 14px 34px -18px rgba(0, 0, 0, 0.8);
-  padding: 8px 9px;
+  padding: 8px 11px;
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   transition:
@@ -1978,7 +1978,13 @@ body::after {
   font-size: 11px;
 }
 
+.instance-chart-tooltip-row + .instance-chart-tooltip-row {
+  margin-top: 2px;
+}
+
+/* 名称和数值之间多留一点：内存那几张图的数值是「353 MB · 17.95%」，6px 时和「内存」几乎贴着（站长 2026-11-07）。 */
 .instance-chart-tooltip-row strong {
+  margin-left: 10px;
   color: var(--text-primary);
   font-weight: 650;
 }
@@ -2188,7 +2194,7 @@ body::after {
 
   .instance-chart-tooltip {
     min-width: 126px;
-    max-width: 190px;
+    max-width: 230px;
   }
 
   .instance-ping-tasks {
