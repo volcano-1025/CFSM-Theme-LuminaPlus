@@ -43,10 +43,11 @@ describe("触屏拖动辅助线", () => {
     hooks().onInit(u);
 
     u.over.dispatchEvent(touchEvent("touchstart", 100, 180));
-    expect(setCursor).toHaveBeenLastCalledWith({ left: 60, top: 80 });
+    // 后两个参数：触发 setCursor 钩子、并广播给同一 sync key 的图（手机上也要联动）。
+    expect(setCursor).toHaveBeenLastCalledWith({ left: 60, top: 80 }, true, true);
 
     u.over.dispatchEvent(touchEvent("touchmove", 260, 150));
-    expect(setCursor).toHaveBeenLastCalledWith({ left: 220, top: 50 });
+    expect(setCursor).toHaveBeenLastCalledWith({ left: 220, top: 50 }, true, true);
   });
 
   it("手指划出画布时把游标夹在边界上，而不是给出负数", () => {
@@ -55,7 +56,7 @@ describe("触屏拖动辅助线", () => {
     hooks().onInit(u);
 
     u.over.dispatchEvent(touchEvent("touchmove", -50, 900));
-    expect(setCursor).toHaveBeenLastCalledWith({ left: 0, top: 200 });
+    expect(setCursor).toHaveBeenLastCalledWith({ left: 0, top: 200 }, true, true);
   });
 
   it("销毁后不再响应触摸", () => {

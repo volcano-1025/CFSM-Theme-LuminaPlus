@@ -301,15 +301,23 @@ function getChartTooltipPosition({
  * 横向拖动才归我们；接管期间 `preventDefault` 防止浏览器再把它当成滚动。
  *
  * 抬手不清游标：手指一离开就把数值收走，等于没法读。停在原处直到下一次触摸。
+ *
+ * 第三个参数让这次移动照常广播给同一个 sync key 的图（详情页八张图联动）。原来不广播，
+ * 手机上拖一张别的不动，各图停在各自上次碰过的时刻（站长 2026-11-07 截图：内存 10:57、网络 10:51）。
  */
 function bindTouchCursor(u: uPlot): () => void {
   const over = u.over;
   const apply = (touch: Touch) => {
     const rect = over.getBoundingClientRect();
-    u.setCursor({
-      left: clamp(touch.clientX - rect.left, 0, rect.width),
-      top: clamp(touch.clientY - rect.top, 0, rect.height),
-    });
+    // uPlot 的类型只声明了前两个参数，第三个 `_pub` 运行时存在（1.6.32 `self.setCursor = (opts, _fire, _pub)`）。
+    (u.setCursor as (opts: { left: number; top: number }, fire?: boolean, pub?: boolean) => void)(
+      {
+        left: clamp(touch.clientX - rect.left, 0, rect.width),
+        top: clamp(touch.clientY - rect.top, 0, rect.height),
+      },
+      true,
+      true,
+    );
   };
   const onStart = (event: TouchEvent) => {
     const touch = event.touches[0];
