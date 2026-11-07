@@ -135,6 +135,9 @@ const LOAD_INTERPOLATE_KEYS = [
   "ram",
   "swap",
   "disk",
+  "ramBytes",
+  "swapBytes",
+  "diskBytes",
   "diskRead",
   "diskWrite",
   "netIn",
@@ -152,6 +155,16 @@ interface ChartPoint {
   [key: string]: number | null;
 }
 
+/**
+ * 百分比图的悬停气泡里同时写用量（issue #11：只看百分比不知道是几 GB）。
+ * 用量按每个点自己那一刻的字节数存一份，不拿当前总量去乘：磁盘扩过容的话前后总量不一样。
+ */
+const BYTE_DETAIL_KEYS: Readonly<Record<string, string>> = {
+  ram: "ramBytes",
+  swap: "swapBytes",
+  disk: "diskBytes",
+};
+
 function metricData(points: ChartPoint[], keys: string[]): uPlot.AlignedData {
   const times = points.map((point) => point.time);
   return [times, ...keys.map((key) => points.map((point) => point[key] ?? null))] as uPlot.AlignedData;
@@ -167,6 +180,9 @@ const DOWNSAMPLE_KEYS = [
   "ram",
   "swap",
   "disk",
+  "ramBytes",
+  "swapBytes",
+  "diskBytes",
   "diskRead",
   "diskWrite",
   "netIn",
@@ -209,6 +225,9 @@ function pointFromNode(node: NodeMetrics): ChartPoint {
     ram: node.ramTotal > 0 ? (node.ramUsed / node.ramTotal) * 100 : null,
     swap: node.swapTotal > 0 ? (node.swapUsed / node.swapTotal) * 100 : null,
     disk: node.diskTotal > 0 ? (node.diskUsed / node.diskTotal) * 100 : null,
+    ramBytes: node.ramTotal > 0 ? node.ramUsed : null,
+    swapBytes: node.swapTotal > 0 ? node.swapUsed : null,
+    diskBytes: node.diskTotal > 0 ? node.diskUsed : null,
     diskRead: node.diskIo?.read_bps ?? null,
     diskWrite: node.diskIo?.write_bps ?? null,
     netIn: node.netDown,
@@ -222,8 +241,16 @@ function pointFromNode(node: NodeMetrics): ChartPoint {
   };
 }
 
-function formatTooltipValue(key: string, value: number | null | undefined, unit: string) {
+function formatTooltipValue(
+  key: string,
+  value: number | null | undefined,
+  unit: string,
+  bytes?: number | null,
+) {
   if (value == null || !Number.isFinite(value)) return "—";
+  if (unit === "%" && bytes != null && Number.isFinite(bytes)) {
+    return `${formatBytes(bytes)} · ${value.toFixed(2)}%`;
+  }
   if (key === "netIn" || key === "netOut") return formatTrafficRateLabel(value);
   // 磁盘 IO 按字节算(MB/s)，网络按比特算(Mbps)——各自领域的习惯单位。
   if (key === "diskRead" || key === "diskWrite") return formatByteRateLabel(value);
@@ -431,9 +458,21 @@ const ChartCard = memo(function ChartCard({
     time: "",
   });
   const data = useMemo(() => metricData(points, keys), [points, keys]);
+  // 和 data 同一批点、同样的下标：气泡按下标同时取百分比和用量。
+  const byteDetail = useMemo(
+    () =>
+      keys.map((key) => {
+        const byteKey = BYTE_DETAIL_KEYS[key];
+        return byteKey ? points.map((point) => point[byteKey] ?? null) : null;
+      }),
+    [points, keys],
+  );
+  const byteDetailRef = useRef(byteDetail);
   useLayoutEffect(() => {
     dataRef.current = data;
-  }, [data]);
+    byteDetailRef.current = byteDetail;
+  }, [byteDetail, data]);
+  const hasByteDetail = keys.some((key) => BYTE_DETAIL_KEYS[key] != null);
   // 区间放 ref 里，options 只跟「有没有钉区间」走；uplot-react 的 setData 在子组件的 effect 里，
   // 晚于这里的 layout effect，重算横轴时读到的已经是新区间。
   const xRangeRef = useRef(xRange ?? null);
@@ -475,7 +514,7 @@ const ChartCard = memo(function ChartCard({
     const tooltip = buildChartTooltipHooks({
       dataRef,
       rangeHours,
-      estimatedWidth: 176,
+      estimatedWidth: hasByteDetail ? 224 : 176,
       setTooltip,
       buildRows: (idx) =>
         keys.map((key, keyIndex) => ({
@@ -484,6 +523,7 @@ const ChartCard = memo(function ChartCard({
             key,
             dataRef.current[keyIndex + 1]?.[idx] as number | null | undefined,
             unit,
+            byteDetailRef.current[keyIndex]?.[idx],
           ),
           color: colors[keyIndex] ?? colors[0],
         })),
@@ -497,7 +537,7 @@ const ChartCard = memo(function ChartCard({
         setCursor: [tooltip.onSetCursor],
       },
     };
-  }, [colors, keys, baseOptions, rangeHours, unit]);
+  }, [colors, keys, baseOptions, hasByteDetail, rangeHours, unit]);
 
   const chartOptions = useMemo<uPlot.Options>(
     () => ({ ...enhancedOptions, width: w, height: h }) as uPlot.Options,
@@ -646,6 +686,9 @@ export function LoadChart({
         ram: totals.ramTotal > 0 ? (record.ram / totals.ramTotal) * 100 : null,
         swap: totals.swapTotal > 0 ? (record.swap / totals.swapTotal) * 100 : null,
         disk: totals.diskTotal > 0 ? (record.disk / totals.diskTotal) * 100 : null,
+        ramBytes: totals.ramTotal > 0 ? record.ram : null,
+        swapBytes: totals.swapTotal > 0 ? record.swap : null,
+        diskBytes: totals.diskTotal > 0 ? record.disk : null,
         diskRead: record.disk_read,
         diskWrite: record.disk_write,
         netIn: record.net_in,

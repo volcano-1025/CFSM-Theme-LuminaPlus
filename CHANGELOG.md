@@ -17,6 +17,8 @@
 - **详情页 Ping 图的线路顺序和卡片一致**（[#13](https://github.com/volcano-1025/CFSM-Theme-LuminaPlus/issues/13)）：
   原来固定电信、联通、移动。现在按这台节点卡片上多线路的顺序排（包括在卡片上点线路名换过的），卡片上没有的线路排在后面；
   单线路模式照原顺序。
+- **详情页内存、Swap、磁盘图悬停时同时显示用量**（[#11](https://github.com/volcano-1025/CFSM-Theme-LuminaPlus/issues/11)）：
+  原来只有百分比，现在写成「1.81 GB · 45.20%」，用量取那一刻的实际值。
 
 ## v1.2.22
 
