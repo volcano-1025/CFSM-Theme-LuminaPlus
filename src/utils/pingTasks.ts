@@ -203,3 +203,23 @@ export function resolveHomepagePingSelections(
       : singleTaskIdsByClient,
   };
 }
+
+/**
+ * 详情页 Ping 图的线路顺序跟卡片走（issue #13）：卡片上显示的线路按卡片顺序排在前，其余照原顺序排在后。
+ * `cardOrder` 为空（单线路模式）时原样返回。
+ */
+export function orderTasksByCardLines<T extends { id: number }>(
+  tasks: readonly T[],
+  cardOrder: readonly number[],
+): T[] {
+  if (cardOrder.length === 0) return [...tasks];
+  const rank = new Map(cardOrder.map((taskId, index) => [taskId, index] as const));
+  return tasks
+    .map((task, index) => ({ task, index }))
+    .sort(
+      (left, right) =>
+        (rank.get(left.task.id) ?? cardOrder.length + left.index) -
+        (rank.get(right.task.id) ?? cardOrder.length + right.index),
+    )
+    .map(({ task }) => task);
+}

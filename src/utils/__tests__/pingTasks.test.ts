@@ -12,6 +12,7 @@ import {
   normalizeHomepagePingTaskBindings,
   resolveHomepagePingSelections,
   resolveHomepagePingTaskIdsByClient,
+  orderTasksByCardLines,
 } from "@/utils/pingTasks";
 
 describe("homepage ping task bindings", () => {
@@ -176,5 +177,19 @@ describe("homepage ping task bindings", () => {
     expect(singleSelections.requestedTaskIdsByClient).toBe(
       singleSelections.singleTaskIdsByClient,
     );
+  });
+});
+
+describe("orderTasksByCardLines", () => {
+  const tasks = [1, 2, 3, 4, 5].map((id) => ({ id }));
+
+  it("puts the card's lines first in the card's order, the rest keep their order", () => {
+    expect(orderTasksByCardLines(tasks, [3, 1, 2]).map((task) => task.id)).toEqual([3, 1, 2, 4, 5]);
+    expect(orderTasksByCardLines(tasks, [5, 2]).map((task) => task.id)).toEqual([5, 2, 1, 3, 4]);
+  });
+
+  it("ignores card lines the chart has no data for and keeps the order without a card order", () => {
+    expect(orderTasksByCardLines(tasks, [8, 2]).map((task) => task.id)).toEqual([2, 1, 3, 4, 5]);
+    expect(orderTasksByCardLines(tasks, []).map((task) => task.id)).toEqual([1, 2, 3, 4, 5]);
   });
 });

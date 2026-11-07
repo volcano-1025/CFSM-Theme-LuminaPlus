@@ -5,6 +5,10 @@ import type uPlot from "uplot";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { usePingRecords } from "@/hooks/useRecords";
 import { useCarrierNames } from "@/hooks/usePublicConfig";
+import { useShowThreeNetDetails } from "@/hooks/useNode";
+import { useNodeMultiPingTaskIds } from "@/hooks/usePingOverview";
+import { useThemeSettings } from "@/hooks/useThemeSettings";
+import { isHomepageMultiPingConfigured, orderTasksByCardLines } from "@/utils/pingTasks";
 import { carrierTaskName } from "@/services/cfsm/mappers";
 import { InstancePanel, InstanceChartLoading } from "./InstancePanel";
 import {
@@ -115,6 +119,8 @@ const CHART_PADDING_RIGHT = 14;
 const SMOOTH_WINDOW_POINTS = 1;
 const SMOOTH_WINDOW_POINTS_PEAK = 13;
 
+const EMPTY_CARD_ORDER: readonly number[] = [];
+
 export function PingChart({
   uuid,
   hours,
@@ -154,14 +160,23 @@ export function PingChart({
   // 线路名以 `/api/config` 的自定义名为准：历史查询是按 uuid+hours 缓存的，站长改名
   // （或 config 晚于历史返回）不会让那份缓存重算，所以在这里按当前名字重新贴一遍。
   const carrierNames = useCarrierNames();
-  // API 顺序与后台任务权重一致，响应本身不一定包含可重排的权重。
+  // 线路顺序跟这台节点卡片上的多线路顺序走（issue #13：卡片能调顺序，图表原来固定电信、联通、移动）。
+  // 口径和卡片同一份（站点设置 → 逐节点换线 → 本机换线）；单线路模式卡片没有顺序，照接口顺序。
+  // 颜色仍按位置给，排第一的永远是同一个颜色，默认顺序下和原来一模一样。
+  const { enableHomepageMultiPing } = useThemeSettings();
+  const showThreeNetDetails = useShowThreeNetDetails();
+  const nodeCardTaskIds = useNodeMultiPingTaskIds(uuid);
+  const cardOrder =
+    enableHomepageMultiPing && showThreeNetDetails && isHomepageMultiPingConfigured(nodeCardTaskIds)
+      ? nodeCardTaskIds
+      : EMPTY_CARD_ORDER;
   const tasks = useMemo(
     () =>
-      (data?.tasks ?? []).map((task) => ({
+      orderTasksByCardLines(data?.tasks ?? [], cardOrder).map((task) => ({
         ...task,
         name: carrierTaskName(task.id, carrierNames),
       })),
-    [carrierNames, data],
+    [cardOrder, carrierNames, data],
   );
   const taskLabels = useMemo(() => {
     const counts = new Map<string, number>();
