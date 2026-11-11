@@ -1,0 +1,1 @@
+import{r as e}from"./useClock-C6I7Gdnb.js";var t=e(`ChevronDown`,[[`path`,{d:`m6 9 6 6 6-6`,key:`qrunsl`}]]);export{t};
