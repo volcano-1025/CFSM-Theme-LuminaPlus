@@ -147,6 +147,18 @@ jobs:
             # 只想给商店补一条更新日志时，用同样的产物再发一版。
             git commit -q --allow-empty -m "${RELEASE_NOTE}"
           else
+            # 同一个版本号只能发一次正式版：这一步只看「产物有没有变化」，改了代码忘了改版本号的话，
+            # dist 上会多出一条同名提交，而产物分支不能改写，删不掉（v1.2.9、v1.2.13 各有两条）。
+            # 依据是 dist 上有没有以「v<版本号> 」开头的提交，不靠标签（发 Release 那一步允许失败）。
+            # 只在产物真变了时才拦：只改文档的推送走上面「产物一致，跳过」那条路，不受影响。
+            # preview 不拦，同一版本号本来就会验收多轮。
+            if [ "${TARGET_BRANCH}" = "dist" ]; then
+              version="${RELEASE_NOTE%% *}"
+              if git log --format=%s | awk -v want="${version} " 'index($0, want) == 1 { found = 1 } END { exit found ? 0 : 1 }'; then
+                echo "::error::${version} 已经发布到 dist 了，而这次的产物和它不一样。先改 package.json 的 version 并在 CHANGELOG.md 加对应的段，再推。"
+                exit 1
+              fi
+            fi
             git commit -q -m "${RELEASE_NOTE}"
           fi
           git push -q origin "HEAD:${TARGET_BRANCH}"

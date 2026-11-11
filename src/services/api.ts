@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/mini";
 import {
   CfsmServerSchema,
   HistoryRowSchema,
@@ -19,7 +19,6 @@ import {
 } from "@/types/cfsm";
 import { getJwtToken, getPrimaryApiBase } from "@/services/cfsm/config";
 import {
-  ApiRequestError,
   cfsmGet,
   cfsmGetAll,
   cfsmPost,
@@ -42,20 +41,13 @@ import { seedMeasuredHistory } from "@/services/pingLiveStore";
 import { applySiteLanguage } from "@/i18n";
 import { resolvePreferredAppearance } from "@/utils/themeSettings";
 
-export { ApiRequestError, DatabaseUpgradeRequiredError } from "@/services/cfsm/http";
+export { ApiRequestError } from "@/services/cfsm/http";
 
 /** 后端支持的历史查询时长档位（小时）。 */
 export const HISTORY_HOURS_OPTIONS = [0.167, 0.5, 1, 6, 12, 24, 48, 96, 168] as const;
 
 /** 未登录用户查询超过 24 小时会被拒绝。 */
 export const ANONYMOUS_MAX_HISTORY_HOURS = 24;
-
-const degradeWarned = new Set<string>();
-export function warnDegradedOnce(key: string, message: string) {
-  if (degradeWarned.has(key)) return;
-  degradeWarned.add(key);
-  console.warn(`[LuminaPlus] ${message}`);
-}
 
 /** serverId → 拥有它的后端地址。多站部署时详情/历史必须打到正确的站点。 */
 const serverBaseIndex = new Map<string, string>();
@@ -121,13 +113,11 @@ export function resetRecentThemeOptionsWrite(): void {
 }
 
 /** `POST /api/theme_options` 的响应体（`{ success, theme_options, message }`）。 */
-const ThemeOptionsSaveSchema = z
-  .object({
-    success: z.boolean().default(true),
-    theme_options: z.record(z.string(), z.unknown()).default({}),
-    message: z.string().catch(""),
-  })
-  .passthrough();
+const ThemeOptionsSaveSchema = z.looseObject({
+  success: z._default(z.boolean(), true),
+  theme_options: z._default(z.record(z.string(), z.unknown()), {}),
+  message: z.catch(z.string(), ""),
+});
 
 /**
  * 把第三方主题配置写到站点级（后端 `appearance_options.theme_options`）。
@@ -163,7 +153,8 @@ export async function saveThemeOptions(
 export async function getPublic(options?: RequestOptions): Promise<PublicConfig> {
   const config = await getSiteConfig(options);
   // 内容要等配置到手才渲染（AppShell 先只显示加载圈），在这里定语言，页面一出来就是对的语言。
-  applySiteLanguage(config.default_language);
+  // 英语 / 西语文案是按需下载的，这里等它到（最多几秒，见 applySiteLanguage）。
+  await applySiteLanguage(config.default_language);
   return {
     sitename: config.site_title,
     description: "",
@@ -355,16 +346,15 @@ export async function getNodes(
 }
 
 /** `/api/server?id=` 的响应：服务器字段平铺在顶层，另带 `sysConfig`（和 `/api/servers` 里那份同构）。 */
-const SingleServerResponseSchema = z.unknown().transform((raw, ctx) => {
+const SingleServerExtrasSchema = z.object({
+  sysConfig: z.prefault(SysConfigSchema, {}),
+  latestReportUpdates: z._default(z.array(LatestReportUpdateSchema), []),
+});
+const SingleServerResponseSchema = z.pipe(z.unknown(), z.transform((raw, ctx) => {
   const server = CfsmServerSchema.safeParse(raw);
-  const extras = z
-    .object({
-      sysConfig: SysConfigSchema.default({}),
-      latestReportUpdates: z.array(LatestReportUpdateSchema).default([]),
-    })
-    .safeParse(raw);
+  const extras = SingleServerExtrasSchema.safeParse(raw);
   if (!server.success || !extras.success) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid /api/server response" });
+    ctx.issues.push({ code: "custom", message: "invalid /api/server response", input: raw });
     return z.NEVER;
   }
   const reportTs = reportTimestampsOf(extras.data.latestReportUpdates).get(server.data.id);
@@ -372,7 +362,7 @@ const SingleServerResponseSchema = z.unknown().transform((raw, ctx) => {
     server: withReportTimestamp(server.data, reportTs),
     sysConfig: extras.data.sysConfig,
   };
-});
+}));
 
 /**
  * 只取一台的快照：直接打开详情页时用（后端主题规范：详情页查 `/api/server?id=`，不要为一台拉全站的 `/api/servers`）。
@@ -403,23 +393,11 @@ export async function getServerSnapshot(
   };
 }
 
-/** 单台服务器详情。 */
-export async function getServerDetail(
-  serverId: string,
-  options?: RequestOptions,
-): Promise<CfsmServer> {
-  return cfsmGet(
-    `/api/server?${new URLSearchParams({ id: serverId })}`,
-    CfsmServerSchema,
-    { ...options, base: options?.base ?? getServerApiBase(serverId) },
-  );
-}
-
 /* ------------------------------------------------------------------ *
  * 历史指标
  * ------------------------------------------------------------------ */
 
-const HistoryResponseSchema = z.array(HistoryRowSchema).catch([]);
+const HistoryResponseSchema = z.catch(z.array(HistoryRowSchema), []);
 
 async function requestHistoryRows(
   serverId: string,
@@ -702,15 +680,4 @@ export async function getTodayTrafficEstimate(
     rangeEndMs: endMs,
     samples: inRange.length,
   };
-}
-
-/** 兼容旧调用点：主题设置改为本地保存，不再写回后端。 */
-export function saveThemeSettings(): Promise<void> {
-  return Promise.reject(
-    new ApiRequestError(
-      "第三方主题不能写入后端设置，请在 /admin#/admin 中修改",
-      403,
-      "/admin#/admin",
-    ),
-  );
 }

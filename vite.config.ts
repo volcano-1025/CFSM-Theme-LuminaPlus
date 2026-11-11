@@ -123,9 +123,8 @@ export default defineConfig(({ mode }) => {
             if (normalized.includes("/node_modules/@tanstack/react-query/")) {
               return "query";
             }
-            if (/\/node_modules\/(?:uplot|uplot-react)\//.test(normalized)) {
-              return "charts";
-            }
+            // uPlot 不单独分块：单独分时 React 核心会被并进那一块，首页入口因此静态依赖它，
+            // 没有图表的首页也要下载整个 uPlot（约 24 KB gzip）。不分就跟着懒加载的详情页走。
             if (normalized.includes("/node_modules/zod/")) {
               return "validation";
             }

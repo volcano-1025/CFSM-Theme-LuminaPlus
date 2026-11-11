@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/mini";
 import { fetchWithTimeout } from "@/utils/abort";
 import {
   clearJwtToken,
@@ -35,13 +35,11 @@ export class DatabaseUpgradeRequiredError extends ApiRequestError {
   }
 }
 
-const ErrorBodySchema = z
-  .object({
-    error: z.string().optional(),
-    message: z.string().optional(),
-    code: z.union([z.number(), z.string()]).optional(),
-  })
-  .passthrough();
+const ErrorBodySchema = z.looseObject({
+  error: z.optional(z.string()),
+  message: z.optional(z.string()),
+  code: z.optional(z.union([z.number(), z.string()])),
+});
 
 export interface RequestOptions {
   signal?: AbortSignal;
@@ -90,7 +88,7 @@ function captureTurnstileVerified(payload: unknown): void {
  * - 401：令牌过期，清掉。读请求之后以访客身份继续，写请求由调用方提示重新登录；不做跳转 —— 主题不接管登录。
  * - 403：Turnstile 凭证失效，清掉，全局 TurnstileGate 会在下次拉 config 时重新弹验证。
  */
-async function readResponse<S extends z.ZodTypeAny>(
+async function readResponse<S extends z.ZodMiniType>(
   resp: Response,
   path: string,
   schema: S,
@@ -127,7 +125,7 @@ async function readResponse<S extends z.ZodTypeAny>(
  * 单个后端的 GET。成功响应直接是业务对象（没有 `{status,data}` 包装），
  * 失败响应是 `{ error, code }`。
  */
-export async function cfsmGet<S extends z.ZodTypeAny>(
+export async function cfsmGet<S extends z.ZodMiniType>(
   path: string,
   schema: S,
   options?: RequestOptions,
@@ -149,7 +147,7 @@ export async function cfsmGet<S extends z.ZodTypeAny>(
  * 仅登录站长可用）—— 与 GET 共用鉴权头（Bearer JWT + Turnstile），额外带 JSON body。
  * 错误处理与 cfsmGet 共用（readResponse）。
  */
-export async function cfsmPost<S extends z.ZodTypeAny>(
+export async function cfsmPost<S extends z.ZodMiniType>(
   path: string,
   body: unknown,
   schema: S,
@@ -182,7 +180,7 @@ export interface MultiBaseResult<T> {
  * 向所有后端并发发起同一个 GET。单站失败不影响其它站，调用方自行决定如何合并
  * 与如何提示（多站部署下部分站点离线属于常态）。
  */
-export async function cfsmGetAll<S extends z.ZodTypeAny>(
+export async function cfsmGetAll<S extends z.ZodMiniType>(
   path: string,
   schema: S,
   options?: Omit<RequestOptions, "base">,

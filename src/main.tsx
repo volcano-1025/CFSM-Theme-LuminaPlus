@@ -12,7 +12,8 @@ const root = rootEl;
 async function bootstrap() {
   // 站点配置到手之前（加载圈、读配置失败、人机验证）先按访客选过的语言 / 浏览器语言显示；
   // 配置一到按后台「默认语言」重新定，见 api.ts 的 getPublic。
-  initLanguage();
+  // 非中文访客要先下载那种语言的文案，和下面的初始化并行，渲染前等它（中文当场完成）。
+  const languageReady = initLanguage();
   if (
     import.meta.env.DEV &&
     new URLSearchParams(window.location.search).get("mock") === "1"
@@ -24,6 +25,7 @@ async function bootstrap() {
     setDevSnapshotPolling(true);
   }
 
+  await languageReady;
   createRoot(root).render(
     <StrictMode>
       <App />

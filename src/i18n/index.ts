@@ -1,7 +1,5 @@
-import { getLanguage, getLocale, type Language } from "./language";
-import { en } from "./messages/en";
-import { es } from "./messages/es";
-import { zh, type MessageKey, type Messages } from "./messages/zh";
+import { getLanguage, getLocale, getMessages, type Language } from "./language";
+import { zh, type MessageKey } from "./messages/zh";
 
 export type { MessageKey } from "./messages/zh";
 export {
@@ -10,14 +8,13 @@ export {
   getLocale,
   initLanguage,
   LANGUAGES,
+  loadLanguage,
   readBackendLanguagePreference,
   resolveLanguage,
   setLanguage,
   useLanguage,
   type Language,
 } from "./language";
-
-const DICTIONARIES: Record<Language, Messages> = { zh, en, es };
 
 /**
  * 取当前界面语言的文案。`{name}` 用 `params` 里的同名值替换。
@@ -26,7 +23,7 @@ const DICTIONARIES: Record<Language, Messages> = { zh, en, es };
  * 组件里 `useMemo` 缓存的文案也会跟着换。
  */
 export function t(key: MessageKey, params?: Record<string, string | number>): string {
-  const template = DICTIONARIES[getLanguage()][key] ?? zh[key];
+  const template = getMessages()[key] ?? zh[key];
   if (!params) return template;
   return template.replace(/\{(\w+)\}/g, (match, name: string) =>
     name in params ? String(params[name]) : match,

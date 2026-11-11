@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   applySiteLanguage,
   getLanguage,
+  loadLanguage,
   readBackendLanguagePreference,
   resolveLanguage,
   setLanguage,
@@ -38,6 +39,10 @@ describe("resolveLanguage", () => {
 });
 
 describe("t", () => {
+  // 英语 / 西语文案按需下载，先装好再测切换。
+  beforeAll(async () => {
+    await Promise.all([loadLanguage("en"), loadLanguage("es")]);
+  });
   afterEach(() => setLanguage("zh"));
 
   it("switches language and fills in parameters", () => {
@@ -81,12 +86,45 @@ describe("backend language preference", () => {
     expect(readBackendLanguagePreference()).toBeNull();
   });
 
-  it("lets the stored choice override the site default when the config arrives", () => {
+  it("lets the stored choice override the site default when the config arrives", async () => {
     window.localStorage.setItem("language_preference", "es");
-    applySiteLanguage("zh");
+    await applySiteLanguage("zh");
     expect(getLanguage()).toBe("es");
     window.localStorage.removeItem("language_preference");
-    applySiteLanguage("zh");
+    await applySiteLanguage("zh");
     expect(getLanguage()).toBe("zh");
+  });
+});
+
+describe("loading messages on demand", () => {
+  afterEach(() => {
+    window.localStorage.removeItem("language_preference");
+  });
+
+  it("stays in Chinese until the other language has arrived, then switches", async () => {
+    // 全新的模块实例：这里英语文案还没下载过。
+    vi.resetModules();
+    const fresh = await import("@/i18n");
+    expect(fresh.t("expire.today")).toBe(zh["expire.today"]);
+
+    const applied = fresh.applySiteLanguage("en");
+    // 还没到：语言没切，文案仍是中文，不会出现「语言是英语、字是中文」的一拍。
+    expect(fresh.getLanguage()).toBe("zh");
+    expect(fresh.t("expire.today")).toBe(zh["expire.today"]);
+
+    await applied;
+    expect(fresh.getLanguage()).toBe("en");
+    expect(fresh.t("expire.today")).toBe(en["expire.today"]);
+    fresh.setLanguage("zh");
+  });
+
+  it("does not switch if the wanted language changed while loading", async () => {
+    vi.resetModules();
+    const fresh = await import("@/i18n");
+    const applied = fresh.applySiteLanguage("es");
+    // 下载途中访客在后台切回了中文。
+    window.localStorage.setItem("language_preference", "zh");
+    await applied;
+    expect(fresh.getLanguage()).toBe("zh");
   });
 });

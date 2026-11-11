@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { zh, type Messages } from "./messages/zh";
 
 /** 主题支持的界面语言，和后端 `/api/config` 的 `default_language` 同一套取值（另有 `auto`）。 */
 export type Language = "zh" | "en" | "es";
@@ -74,6 +75,42 @@ export function getLocale(language: Language = current): string {
   return LOCALES[language];
 }
 
+/**
+ * 文案按需加载：中文是键的来源和兜底，跟着入口走；英语、西语各自一个块，用到才下载
+ * （原来三份一起进首屏，中文访客白下载约 16 KB gzip）。
+ */
+const dictionaries: Partial<Record<Language, Messages>> = { zh };
+const LOADERS: Record<Exclude<Language, "zh">, () => Promise<Messages>> = {
+  en: () => import("./messages/en").then((module) => module.en),
+  es: () => import("./messages/es").then((module) => module.es),
+};
+const loading = new Map<Language, Promise<void>>();
+
+/** 当前语言的文案；那份还没下载到就先给中文（`t` 逐条兜底也是中文）。 */
+export function getMessages(language: Language = current): Messages {
+  return dictionaries[language] ?? zh;
+}
+
+/** 下载某种语言的文案。已经有了立刻完成；失败不留缓存，下次调用重试。 */
+export function loadLanguage(language: Language): Promise<void> {
+  if (language === "zh" || dictionaries[language]) return Promise.resolve();
+  let pending = loading.get(language);
+  if (!pending) {
+    pending = LOADERS[language]()
+      .then((messages) => {
+        dictionaries[language] = messages;
+      })
+      .finally(() => {
+        loading.delete(language);
+      });
+    loading.set(language, pending);
+  }
+  return pending;
+}
+
+/** 等文案块的上限。超过就先按当前语言显示，块到了再换（那时整棵树重挂载一次）。 */
+const LANGUAGE_LOAD_WAIT_MS = 4000;
+
 export function setLanguage(language: Language) {
   if (language === current) return;
   current = language;
@@ -83,23 +120,49 @@ export function setLanguage(language: Language) {
 
 let siteDefaultLanguage: string | null | undefined = "auto";
 
-/** 按站点配置的 `default_language`（和访客在后台选过的语言）定界面语言。在解析 `/api/config` 时调用，内容渲染前语言就已经定了，不会先中文再跳。 */
-export function applySiteLanguage(defaultLanguage: string | null | undefined) {
+function desiredLanguage(): Language {
+  return resolveLanguage(siteDefaultLanguage, browserLanguages(), readBackendLanguagePreference());
+}
+
+/**
+ * 按站点配置的 `default_language`（和访客在后台选过的语言）定界面语言。在解析 `/api/config` 时调用并等它完成，
+ * 内容渲染前语言就已经定了，不会先中文再跳。
+ *
+ * 文案已经在手（中文，或这种语言之前下载过）时当场切换；否则先下载，返回的 Promise 等到切完为止，
+ * 最多等 `LANGUAGE_LOAD_WAIT_MS`。下载失败留在当前语言，不让页面卡住。
+ */
+export function applySiteLanguage(defaultLanguage: string | null | undefined): Promise<void> {
   siteDefaultLanguage = defaultLanguage;
-  setLanguage(resolveLanguage(defaultLanguage, browserLanguages(), readBackendLanguagePreference()));
+  const target = desiredLanguage();
+  if (target === "zh" || dictionaries[target]) {
+    setLanguage(target);
+    return Promise.resolve();
+  }
+  const applied = loadLanguage(target).then(
+    () => {
+      // 下载途中语言可能又变了（别的标签页切了、配置到了）：只在它仍是要的那种时才切。
+      if (desiredLanguage() === target) setLanguage(target);
+    },
+    () => {},
+  );
+  return Promise.race([
+    applied,
+    new Promise<void>((resolve) => setTimeout(resolve, LANGUAGE_LOAD_WAIT_MS)),
+  ]);
 }
 
 /**
  * 页面启动时调用一次：先按访客选过的语言 / 浏览器语言显示（站点配置到手前的加载圈、出错页、人机验证），
  * 并跟着别的标签页里的切换走 —— 后台页面开在另一个标签页，点了 EN / 中 / ES，这边立刻换。
  */
-export function initLanguage() {
-  applySiteLanguage(siteDefaultLanguage);
-  if (typeof window === "undefined") return;
+export function initLanguage(): Promise<void> {
+  const ready = applySiteLanguage(siteDefaultLanguage);
+  if (typeof window === "undefined") return ready;
   window.addEventListener("storage", (event) => {
     if (event.key !== null && event.key !== BACKEND_LANGUAGE_STORAGE_KEY) return;
-    applySiteLanguage(siteDefaultLanguage);
+    void applySiteLanguage(siteDefaultLanguage);
   });
+  return ready;
 }
 
 export function subscribeLanguage(listener: () => void) {

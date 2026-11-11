@@ -1,53 +1,78 @@
-import { z } from "zod";
+import * as z from "zod/mini";
 
 /**
  * 上半部分是 CF-Server-Monitor 后端的原始响应结构（宽松解析，容忍字段缺失/类型漂移），
  * 下半部分是主题内部的展示模型。两者之间由 `@/services/cfsm/mappers` 转换。
  */
 
-const looseString = z
-  .union([z.string(), z.number(), z.boolean()])
-  .transform((v) => String(v))
-  .catch("");
-const looseNumber = z
-  .union([z.number(), z.string()])
-  .transform((v) => {
-    if (typeof v === "number") return Number.isFinite(v) ? v : 0;
-    const parsed = Number.parseFloat(v);
-    return Number.isFinite(parsed) ? parsed : 0;
-  })
-  .catch(0);
-const nullableNumber = z
-  .union([z.number(), z.string(), z.null()])
-  .transform((v) => {
-    if (v == null) return null;
-    if (typeof v === "number") return Number.isFinite(v) ? v : null;
-    const parsed = Number.parseFloat(v);
-    return Number.isFinite(parsed) ? parsed : null;
-  })
-  .nullish()
-  .catch(null);
+/*
+ * 用的是 zod 的精简版（zod/mini）：规则写成函数嵌套而不是链式调用，没用到的校验器不会进产物
+ * （标准版 zod 4 约 25 KB gzip，全在首屏）。对照表：
+ *   x.default(v)   → withDefault(x, v)     x.optional() → z.optional(x)
+ *   x.catch(v)     → z.catch(x, v)         x.transform(f) → z.pipe(x, z.transform(f))
+ *   .passthrough() → z.looseObject({...})
+ */
+const withDefault = z._default;
+
+const looseString = z.catch(
+  z.pipe(
+    z.union([z.string(), z.number(), z.boolean()]),
+    z.transform((v) => String(v)),
+  ),
+  "",
+);
+const looseNumber = z.catch(
+  z.pipe(
+    z.union([z.number(), z.string()]),
+    z.transform((v) => {
+      if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+      const parsed = Number.parseFloat(v);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }),
+  ),
+  0,
+);
+const nullableNumber = z.catch(
+  z.nullish(
+    z.pipe(
+      z.union([z.number(), z.string(), z.null()]),
+      z.transform((v) => {
+        if (v == null) return null;
+        if (typeof v === "number") return Number.isFinite(v) ? v : null;
+        const parsed = Number.parseFloat(v);
+        return Number.isFinite(parsed) ? parsed : null;
+      }),
+    ),
+  ),
+  null,
+);
+/** 缺席 / null 读成空串的字符串（后端后加的字段，老后端不下发）。 */
+const blankableString = z.pipe(
+  z.nullish(looseString),
+  z.transform((v) => v ?? ""),
+);
+/** 字符串或数字的 ID，统一成字符串；别的类型算校验失败。 */
+const idString = z.pipe(
+  z.union([z.string(), z.number()]),
+  z.transform((v) => String(v)),
+);
 /** 磁盘 IO；旧探针或全零时后端不会下发该对象。 */
-export const DiskIoSchema = z
-  .object({
-    read_bps: looseNumber.default(0),
-    write_bps: looseNumber.default(0),
-    read_iops: looseNumber.default(0),
-    write_iops: looseNumber.default(0),
-    await_ms: looseNumber.default(0),
-    util: looseNumber.default(0),
-  })
-  .passthrough();
+export const DiskIoSchema = z.looseObject({
+  read_bps: withDefault(looseNumber, 0),
+  write_bps: withDefault(looseNumber, 0),
+  read_iops: withDefault(looseNumber, 0),
+  write_iops: withDefault(looseNumber, 0),
+  await_ms: withDefault(looseNumber, 0),
+  util: withDefault(looseNumber, 0),
+});
 
 export type DiskIo = z.output<typeof DiskIoSchema>;
 
-export const GpuEntrySchema = z
-  .object({
-    id: looseString.default(""),
-    name: looseString.default(""),
-    info: nullableNumber,
-  })
-  .passthrough();
+export const GpuEntrySchema = z.looseObject({
+  id: withDefault(looseString, ""),
+  name: withDefault(looseString, ""),
+  info: nullableNumber,
+});
 
 export type GpuEntry = z.output<typeof GpuEntrySchema>;
 
@@ -57,22 +82,18 @@ export type GpuEntry = z.output<typeof GpuEntrySchema>;
  * 固定 30 个槽位、每 2 分钟一个，`ping` 与 `loss` 各一个数组。
  * 线路值可能是 `false`（该节点禁用了这条线路），这里统一归一成 null。
  */
-export const LatencyPointSchema = z
-  .object({
-    ts: looseNumber.default(0),
-    ct: nullableNumber,
-    cu: nullableNumber,
-    cm: nullableNumber,
-    bd: nullableNumber,
-    // 后端 2.8.5 Beta4 起多出来的四个自定义槽位。老后端不下发，读出来是 undefined → null。
-    node_1: nullableNumber,
-    node_2: nullableNumber,
-    node_3: nullableNumber,
-    node_4: nullableNumber,
-  })
-  .passthrough();
-
-export type LatencyPoint = z.output<typeof LatencyPointSchema>;
+export const LatencyPointSchema = z.looseObject({
+  ts: withDefault(looseNumber, 0),
+  ct: nullableNumber,
+  cu: nullableNumber,
+  cm: nullableNumber,
+  bd: nullableNumber,
+  // 后端 2.8.5 Beta4 起多出来的四个自定义槽位。老后端不下发，读出来是 undefined → null。
+  node_1: nullableNumber,
+  node_2: nullableNumber,
+  node_3: nullableNumber,
+  node_4: nullableNumber,
+});
 
 /**
  * `/api/servers` 与 `/api/server` 的服务器对象。
@@ -80,261 +101,240 @@ export type LatencyPoint = z.output<typeof LatencyPointSchema>;
  * 单位约定（与后端一致）：`ram_*` / `swap_*` / `disk_*` 为 MiB，网络速率与累计量为字节，
  * `traffic_limit` 为 GB，`boot_time` / `last_updated` 为毫秒时间戳。
  */
-export const CfsmServerSchema = z
-  .object({
-    id: z.union([z.string(), z.number()]).transform((v) => String(v)),
-    name: looseString.default(""),
-    server_group: looseString.default(""),
-    tags: looseString.default(""),
-    price: looseString.default(""),
-    billing_cycle: looseString.default(""),
-    auto_renewal: looseString.default(""),
-    currency: looseString.default(""),
-    expire_date: looseString.default(""),
-    traffic_limit: looseString.default(""),
-    traffic_calc_type: looseString.default(""),
-    reset_day: looseNumber.default(0),
-    report_interval: looseNumber.default(0),
-    is_hidden: looseString.default("0"),
-    sort_order: looseNumber.default(0),
+export const CfsmServerSchema = z.looseObject({
+  id: idString,
+  name: withDefault(looseString, ""),
+  server_group: withDefault(looseString, ""),
+  tags: withDefault(looseString, ""),
+  price: withDefault(looseString, ""),
+  billing_cycle: withDefault(looseString, ""),
+  auto_renewal: withDefault(looseString, ""),
+  currency: withDefault(looseString, ""),
+  expire_date: withDefault(looseString, ""),
+  traffic_limit: withDefault(looseString, ""),
+  traffic_calc_type: withDefault(looseString, ""),
+  reset_day: withDefault(looseNumber, 0),
+  report_interval: withDefault(looseNumber, 0),
+  is_hidden: withDefault(looseString, "0"),
+  sort_order: withDefault(looseNumber, 0),
 
-    cpu: looseNumber.default(0),
-    load_avg: looseString.default(""),
-    net_in_speed: looseNumber.default(0),
-    net_out_speed: looseNumber.default(0),
-    net_rx: looseNumber.default(0),
-    net_tx: looseNumber.default(0),
-    net_rx_monthly: looseNumber.default(0),
-    net_tx_monthly: looseNumber.default(0),
-    processes: looseNumber.default(0),
-    tcp_conn: looseNumber.default(0),
-    udp_conn: looseNumber.default(0),
+  cpu: withDefault(looseNumber, 0),
+  load_avg: withDefault(looseString, ""),
+  net_in_speed: withDefault(looseNumber, 0),
+  net_out_speed: withDefault(looseNumber, 0),
+  net_rx: withDefault(looseNumber, 0),
+  net_tx: withDefault(looseNumber, 0),
+  net_rx_monthly: withDefault(looseNumber, 0),
+  net_tx_monthly: withDefault(looseNumber, 0),
+  processes: withDefault(looseNumber, 0),
+  tcp_conn: withDefault(looseNumber, 0),
+  udp_conn: withDefault(looseNumber, 0),
 
-    ping_ct: nullableNumber,
-    ping_cu: nullableNumber,
-    ping_cm: nullableNumber,
-    ping_bd: nullableNumber,
-    ping_node_1: nullableNumber,
-    ping_node_2: nullableNumber,
-    ping_node_3: nullableNumber,
-    ping_node_4: nullableNumber,
-    loss_ct: nullableNumber,
-    loss_cu: nullableNumber,
-    loss_cm: nullableNumber,
-    loss_bd: nullableNumber,
-    loss_node_1: nullableNumber,
-    loss_node_2: nullableNumber,
-    loss_node_3: nullableNumber,
-    loss_node_4: nullableNumber,
-    // Workers 2.8.3 Beta2 起下发的一小时探测窗口；旧版本没有这两个字段。
-    ping: z.array(LatencyPointSchema).optional(),
-    loss: z.array(LatencyPointSchema).optional(),
+  ping_ct: nullableNumber,
+  ping_cu: nullableNumber,
+  ping_cm: nullableNumber,
+  ping_bd: nullableNumber,
+  ping_node_1: nullableNumber,
+  ping_node_2: nullableNumber,
+  ping_node_3: nullableNumber,
+  ping_node_4: nullableNumber,
+  loss_ct: nullableNumber,
+  loss_cu: nullableNumber,
+  loss_cm: nullableNumber,
+  loss_bd: nullableNumber,
+  loss_node_1: nullableNumber,
+  loss_node_2: nullableNumber,
+  loss_node_3: nullableNumber,
+  loss_node_4: nullableNumber,
+  // Workers 2.8.3 Beta2 起下发的一小时探测窗口；旧版本没有这两个字段。
+  ping: z.optional(z.array(LatencyPointSchema)),
+  loss: z.optional(z.array(LatencyPointSchema)),
 
-    ram_total: looseNumber.default(0),
-    ram_used: looseNumber.default(0),
-    swap_total: looseNumber.default(0),
-    swap_used: looseNumber.default(0),
-    disk_total: looseNumber.default(0),
-    disk_used: looseNumber.default(0),
-    disk: DiskIoSchema.optional(),
+  ram_total: withDefault(looseNumber, 0),
+  ram_used: withDefault(looseNumber, 0),
+  swap_total: withDefault(looseNumber, 0),
+  swap_used: withDefault(looseNumber, 0),
+  disk_total: withDefault(looseNumber, 0),
+  disk_used: withDefault(looseNumber, 0),
+  disk: z.optional(DiskIoSchema),
 
-    cpu_cores: looseNumber.default(0),
-    cpu_info: looseString.default(""),
-    gpu_info: z.unknown().optional(),
-    arch: looseString.default(""),
-    os: looseString.default(""),
-    kernel_version: looseString.default(""),
-    region: looseString.default(""),
-    ip_v4: looseString.default("0"),
-    ip_v6: looseString.default("0"),
-    boot_time: looseString.default(""),
-    agent_version: looseString.default(""),
-    last_updated: looseNumber.default(0),
-    timestamp: looseNumber.default(0),
-    /**
-     * 后端收到这台最近一次上报的时刻（后端自己的时钟）。不是后端字段：主题从 `latestReportUpdates[].reportTs` 和
-     * WS 消息的 `ts` 填进来，判在线用它（见 mappers 的 `isServerOnline`）。`last_updated` 是探针时钟打的样本时间。
-     */
-    report_timestamp: looseNumber.optional(),
-    is_online: z.boolean().optional(),
-  })
-  .passthrough();
+  cpu_cores: withDefault(looseNumber, 0),
+  cpu_info: withDefault(looseString, ""),
+  gpu_info: z.optional(z.unknown()),
+  arch: withDefault(looseString, ""),
+  os: withDefault(looseString, ""),
+  kernel_version: withDefault(looseString, ""),
+  region: withDefault(looseString, ""),
+  ip_v4: withDefault(looseString, "0"),
+  ip_v6: withDefault(looseString, "0"),
+  boot_time: withDefault(looseString, ""),
+  agent_version: withDefault(looseString, ""),
+  last_updated: withDefault(looseNumber, 0),
+  timestamp: withDefault(looseNumber, 0),
+  /**
+   * 后端收到这台最近一次上报的时刻（后端自己的时钟）。不是后端字段：主题从 `latestReportUpdates[].reportTs` 和
+   * WS 消息的 `ts` 填进来，判在线用它（见 mappers 的 `isServerOnline`）。`last_updated` 是探针时钟打的样本时间。
+   */
+  report_timestamp: z.optional(looseNumber),
+  is_online: z.optional(z.boolean()),
+});
 
 export type CfsmServer = z.output<typeof CfsmServerSchema>;
 
-/** WebSocket / latestReportUpdates 下发的增量样本，字段是 Server 的子集。 */
-export const CfsmServerPatchSchema = CfsmServerSchema.partial().passthrough();
-
-export type CfsmServerPatch = Partial<CfsmServer> & Record<string, unknown>;
-
-export const LatestReportUpdateSchema = z
-  .object({
-    serverId: z.union([z.string(), z.number()]).transform((v) => String(v)),
-    reportTs: looseNumber.optional(),
-    reportAgeMs: looseNumber.optional(),
-    samples: z
-      .array(
-        z
-          .object({
-            ts: looseNumber.optional(),
-            data: z.record(z.string(), z.unknown()).optional(),
-            payload: z.record(z.string(), z.unknown()).optional(),
-            metrics: z.record(z.string(), z.unknown()).optional(),
-          })
-          .passthrough(),
-      )
-      .default([]),
-  })
-  .passthrough();
+export const LatestReportUpdateSchema = z.looseObject({
+  serverId: idString,
+  reportTs: z.optional(looseNumber),
+  reportAgeMs: z.optional(looseNumber),
+  samples: withDefault(
+    z.array(
+      z.looseObject({
+        ts: z.optional(looseNumber),
+        data: z.optional(z.record(z.string(), z.unknown())),
+        payload: z.optional(z.record(z.string(), z.unknown())),
+        metrics: z.optional(z.record(z.string(), z.unknown())),
+      }),
+    ),
+    [],
+  ),
+});
 
 export type LatestReportUpdate = z.output<typeof LatestReportUpdateSchema>;
 
-export const SysConfigSchema = z
-  .object({
-    show_price: z.boolean().default(true),
-    show_expire: z.boolean().default(true),
-    show_tf: z.boolean().default(true),
-    show_time: z.boolean().default(true),
-    /**
-     * 后端是否输出首页的**详细** ping/loss（`servers[].ping[]` / `loss[]` 那一小时窗口）。
-     *
-     * 后端 2026-08-23 加的开关。关掉时那两个数组不再下发，只剩每台节点当前的
-     * `ping_ct/cu/cm/bd` 单条值 —— 主题要据此回退，不然三网那三条线没有数据可画、
-     * 开页自检也会把「本来就不下发」误判成「后端数据坏了」而反复弹窗。
-     * 默认 true：老版本后端没有这个字段，而它们是一直输出详细数据的。
-     */
-    show_three_net_details: z.boolean().default(true),
-    long_history_points: looseNumber.optional(),
-    display_mode: looseString.optional(),
-  })
-  .passthrough();
+export const SysConfigSchema = z.looseObject({
+  show_price: withDefault(z.boolean(), true),
+  show_expire: withDefault(z.boolean(), true),
+  show_tf: withDefault(z.boolean(), true),
+  show_time: withDefault(z.boolean(), true),
+  /**
+   * 后端是否输出首页的**详细** ping/loss（`servers[].ping[]` / `loss[]` 那一小时窗口）。
+   *
+   * 后端 2026-08-23 加的开关。关掉时那两个数组不再下发，只剩每台节点当前的
+   * `ping_ct/cu/cm/bd` 单条值 —— 主题要据此回退，不然三网那三条线没有数据可画、
+   * 开页自检也会把「本来就不下发」误判成「后端数据坏了」而反复弹窗。
+   * 默认 true：老版本后端没有这个字段，而它们是一直输出详细数据的。
+   */
+  show_three_net_details: withDefault(z.boolean(), true),
+  long_history_points: z.optional(looseNumber),
+  display_mode: z.optional(looseString),
+});
 
 export type SysConfig = z.output<typeof SysConfigSchema>;
 
-export const ServersResponseSchema = z
-  .object({
-    servers: z.array(CfsmServerSchema).default([]),
-    latestReportUpdates: z.array(LatestReportUpdateSchema).default([]),
-    stats: z
-      .object({
-        total: looseNumber.default(0),
-        online: looseNumber.default(0),
-        offline: looseNumber.default(0),
-        globalSpeedIn: looseNumber.default(0),
-        globalSpeedOut: looseNumber.default(0),
-        globalNetTx: looseNumber.default(0),
-        globalNetRx: looseNumber.default(0),
-      })
-      .partial()
-      .passthrough()
-      .default({}),
-    regionStats: z.record(z.string(), looseNumber).default({}),
-    sysConfig: SysConfigSchema.default({}),
-  })
-  .passthrough();
+export const ServersResponseSchema = z.looseObject({
+  servers: withDefault(z.array(CfsmServerSchema), []),
+  latestReportUpdates: withDefault(z.array(LatestReportUpdateSchema), []),
+  // 各项都可缺：缺了就是 undefined，不补 0（调用方按「后端没给」处理）。
+  stats: withDefault(
+    z.looseObject({
+      total: z.optional(looseNumber),
+      online: z.optional(looseNumber),
+      offline: z.optional(looseNumber),
+      globalSpeedIn: z.optional(looseNumber),
+      globalSpeedOut: z.optional(looseNumber),
+      globalNetTx: z.optional(looseNumber),
+      globalNetRx: z.optional(looseNumber),
+    }),
+    {},
+  ),
+  regionStats: withDefault(z.record(z.string(), looseNumber), {}),
+  // prefault：缺省时拿 {} 再过一遍这份规则，里面各字段的默认值才会补上。
+  // zod 4 的 default 是直接返回给的值、不再解析（v3 会解析），用它会得到一个空对象。
+  sysConfig: z.prefault(SysConfigSchema, {}),
+});
 
-export type ServersResponse = z.output<typeof ServersResponseSchema>;
-
-export const SiteConfigSchema = z
-  .object({
-    version: looseString.default(""),
-    last_workers_version: looseString.nullish().transform((v) => v ?? ""),
-    last_agent_version: looseString.nullish().transform((v) => v ?? ""),
-    is_public: z.boolean().default(true),
-    authorization: z.boolean().default(false),
-    turnstile_enabled: z.boolean().default(false),
-    turnstile_login_enabled: z.boolean().default(false),
-    turnstile_site_key: looseString.default(""),
-    site_title: looseString.default(""),
-    display_mode: looseString.default(""),
-    /** 后台「外观设置 → 默认外观」：auto / dark / light。主题设置没写默认外观时拿它垫底。 */
-    preferred_theme: looseString.default(""),
-    /** 后台「外观设置 → 默认语言」：auto / zh / en / es。主题的界面语言跟着它走，见 i18n 的 `resolveLanguage`。 */
-    default_language: looseString.default(""),
-    theme_options: z.record(z.string(), z.unknown()).default({}),
-    verified: z.boolean().default(false),
-    turnstile_verified: looseString.nullish().transform((v) => v ?? ""),
-    long_history_points: looseNumber.default(120),
-    /**
-     * 单次前端实时连接的时长上限（分钟，0 = 不限；后端 2026-08-20 加的站点设置）。后端只下发不执行：
-     * 到点断开、问用户要不要继续都靠前端，见 wsStore 的 setRealtimeSessionLimitMinutes。
-     */
-    frontend_ws_timeout_minutes: looseNumber.default(0),
-    /**
-     * 站长在后台给四条线路起的名字（后端后加的字段）。缺席 / 空串就用主题的默认名
-     * （电信 / 联通 / 移动 / BD），见 mappers 的 `resolveCarrierNames` —— 老后端不下发这几个
-     * 字段，默认名必须原样保留，否则存量站点的线路名会集体变空。
-     */
-    custom_ct_name: looseString.nullish().transform((v) => v ?? ""),
-    custom_cu_name: looseString.nullish().transform((v) => v ?? ""),
-    custom_cm_name: looseString.nullish().transform((v) => v ?? ""),
-    custom_bd_name: looseString.nullish().transform((v) => v ?? ""),
-    // 后端 2.8.5 Beta4 起多出来的四条自定义线路，名字键名和前四条不是一个风格。
-    node_1_name: looseString.nullish().transform((v) => v ?? ""),
-    node_2_name: looseString.nullish().transform((v) => v ?? ""),
-    node_3_name: looseString.nullish().transform((v) => v ?? ""),
-    node_4_name: looseString.nullish().transform((v) => v ?? ""),
-    /**
-     * 后端下发的首页延迟窗口口径：`points`=柱子格数、`hours`=窗口跨度（小时）。
-     * 后端后加的字段，老后端 / 还没上线时缺席 —— 前端据 `hours` 定跨度，缺席就回退到
-     * 「从数据时间戳自推」（见 usePingOverview 的 buildPingBuckets）。`points` 暂不驱动格数。
-     */
-    latency_window: z
-      .object({
-        points: looseNumber.optional(),
-        hours: looseNumber.optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-export type SiteConfig = z.output<typeof SiteConfigSchema>;
+export const SiteConfigSchema = z.looseObject({
+  version: withDefault(looseString, ""),
+  last_workers_version: blankableString,
+  last_agent_version: blankableString,
+  is_public: withDefault(z.boolean(), true),
+  authorization: withDefault(z.boolean(), false),
+  turnstile_enabled: withDefault(z.boolean(), false),
+  turnstile_login_enabled: withDefault(z.boolean(), false),
+  turnstile_site_key: withDefault(looseString, ""),
+  site_title: withDefault(looseString, ""),
+  display_mode: withDefault(looseString, ""),
+  /** 后台「外观设置 → 默认外观」：auto / dark / light。主题设置没写默认外观时拿它垫底。 */
+  preferred_theme: withDefault(looseString, ""),
+  /** 后台「外观设置 → 默认语言」：auto / zh / en / es。主题的界面语言跟着它走，见 i18n 的 `resolveLanguage`。 */
+  default_language: withDefault(looseString, ""),
+  theme_options: withDefault(z.record(z.string(), z.unknown()), {}),
+  verified: withDefault(z.boolean(), false),
+  turnstile_verified: blankableString,
+  long_history_points: withDefault(looseNumber, 120),
+  /**
+   * 单次前端实时连接的时长上限（分钟，0 = 不限；后端 2026-08-20 加的站点设置）。后端只下发不执行：
+   * 到点断开、问用户要不要继续都靠前端，见 wsStore 的 setRealtimeSessionLimitMinutes。
+   */
+  frontend_ws_timeout_minutes: withDefault(looseNumber, 0),
+  /**
+   * 站长在后台给四条线路起的名字（后端后加的字段）。缺席 / 空串就用主题的默认名
+   * （电信 / 联通 / 移动 / BD），见 mappers 的 `resolveCarrierNames` —— 老后端不下发这几个
+   * 字段，默认名必须原样保留，否则存量站点的线路名会集体变空。
+   */
+  custom_ct_name: blankableString,
+  custom_cu_name: blankableString,
+  custom_cm_name: blankableString,
+  custom_bd_name: blankableString,
+  // 后端 2.8.5 Beta4 起多出来的四条自定义线路，名字键名和前四条不是一个风格。
+  node_1_name: blankableString,
+  node_2_name: blankableString,
+  node_3_name: blankableString,
+  node_4_name: blankableString,
+  /**
+   * 后端下发的首页延迟窗口口径：`points`=柱子格数、`hours`=窗口跨度（小时）。
+   * 后端后加的字段，老后端 / 还没上线时缺席 —— 前端据 `hours` 定跨度，缺席就回退到
+   * 「从数据时间戳自推」（见 usePingOverview 的 buildPingBuckets）。`points` 暂不驱动格数。
+   */
+  latency_window: z.optional(
+    z.looseObject({
+      points: z.optional(looseNumber),
+      hours: z.optional(looseNumber),
+    }),
+  ),
+});
 
 /** `/api/history/all` 的一行；字段随后端列定义，缺失时按 0 处理。 */
-export const HistoryRowSchema = z
-  .object({
-    timestamp: looseNumber.default(0),
-    cpu: looseNumber.default(0),
-    gpu_info: z.unknown().optional(),
-    ram_total: looseNumber.default(0),
-    ram_used: looseNumber.default(0),
-    swap_total: looseNumber.default(0),
-    swap_used: looseNumber.default(0),
-    disk_total: looseNumber.default(0),
-    disk_used: looseNumber.default(0),
-    disk: DiskIoSchema.optional(),
-    disk_read_bps: looseNumber.optional(),
-    disk_write_bps: looseNumber.optional(),
-    disk_read_iops: looseNumber.optional(),
-    disk_write_iops: looseNumber.optional(),
-    disk_await_ms: looseNumber.optional(),
-    disk_util: looseNumber.optional(),
-    processes: looseNumber.default(0),
-    net_in_speed: looseNumber.default(0),
-    net_out_speed: looseNumber.default(0),
-    tcp_conn: looseNumber.default(0),
-    udp_conn: looseNumber.default(0),
-    ping_ct: nullableNumber,
-    ping_cu: nullableNumber,
-    ping_cm: nullableNumber,
-    ping_bd: nullableNumber,
-    ping_node_1: nullableNumber,
-    ping_node_2: nullableNumber,
-    ping_node_3: nullableNumber,
-    ping_node_4: nullableNumber,
-    loss_ct: nullableNumber,
-    loss_cu: nullableNumber,
-    loss_cm: nullableNumber,
-    loss_bd: nullableNumber,
-    loss_node_1: nullableNumber,
-    loss_node_2: nullableNumber,
-    loss_node_3: nullableNumber,
-    loss_node_4: nullableNumber,
-    load_avg: looseString.default(""),
-    kernel_version: looseString.default(""),
-  })
-  .passthrough();
+export const HistoryRowSchema = z.looseObject({
+  timestamp: withDefault(looseNumber, 0),
+  cpu: withDefault(looseNumber, 0),
+  gpu_info: z.optional(z.unknown()),
+  ram_total: withDefault(looseNumber, 0),
+  ram_used: withDefault(looseNumber, 0),
+  swap_total: withDefault(looseNumber, 0),
+  swap_used: withDefault(looseNumber, 0),
+  disk_total: withDefault(looseNumber, 0),
+  disk_used: withDefault(looseNumber, 0),
+  disk: z.optional(DiskIoSchema),
+  disk_read_bps: z.optional(looseNumber),
+  disk_write_bps: z.optional(looseNumber),
+  disk_read_iops: z.optional(looseNumber),
+  disk_write_iops: z.optional(looseNumber),
+  disk_await_ms: z.optional(looseNumber),
+  disk_util: z.optional(looseNumber),
+  processes: withDefault(looseNumber, 0),
+  net_in_speed: withDefault(looseNumber, 0),
+  net_out_speed: withDefault(looseNumber, 0),
+  tcp_conn: withDefault(looseNumber, 0),
+  udp_conn: withDefault(looseNumber, 0),
+  ping_ct: nullableNumber,
+  ping_cu: nullableNumber,
+  ping_cm: nullableNumber,
+  ping_bd: nullableNumber,
+  ping_node_1: nullableNumber,
+  ping_node_2: nullableNumber,
+  ping_node_3: nullableNumber,
+  ping_node_4: nullableNumber,
+  loss_ct: nullableNumber,
+  loss_cu: nullableNumber,
+  loss_cm: nullableNumber,
+  loss_bd: nullableNumber,
+  loss_node_1: nullableNumber,
+  loss_node_2: nullableNumber,
+  loss_node_3: nullableNumber,
+  loss_node_4: nullableNumber,
+  load_avg: withDefault(looseString, ""),
+  kernel_version: withDefault(looseString, ""),
+});
 
 export type HistoryRow = z.output<typeof HistoryRowSchema>;
 

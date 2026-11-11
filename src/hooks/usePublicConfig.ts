@@ -6,7 +6,10 @@ import type { CarrierNames, PublicConfig } from "@/types/cfsm";
 export function usePublicConfig() {
   return useQuery<PublicConfig>({
     queryKey: ["public"],
-    queryFn: ({ signal }) => getPublic({ signal }),
+    // 故意不接 `signal`：接了的话，订阅它的组件一卸载 TanStack 就取消这次请求、下次挂载重发。
+    // 站点语言和开页时按浏览器猜的不一样时，语言一定下来整棵树会重挂载一次（App.tsx），正好撞在请求收尾那一刻，
+    // `/api/config` 就发了两次（v1.2.21 起，2026-11-11 在 mock 里量到）。不接就不会被取消，重挂载的组件接着等同一次请求。
+    queryFn: () => getPublic(),
     // 整个页面生命周期只查一次（后端主题规范）。需要新的一份时由明确的事件触发：站长同步前重拉、
     // 人机验证通过 / 凭证失效、登录态变化（见 queryClient）。
     staleTime: Number.POSITIVE_INFINITY,

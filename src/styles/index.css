@@ -12,7 +12,7 @@
 @import "./surface.css";
 @import "./home.css";
 @import "./cost-summary.css";
-@import "./traffic-stats.css";
+/* traffic-stats.css 不引入：流量页（pages/Traffic.tsx）v1.2.5 起没有入口，样式文件留着备用，恢复页面时把这行加回来。 */
 @import "./node-card.css";
 @import "./compact-node-card.css";
 @import "./mini-node-card.css";
