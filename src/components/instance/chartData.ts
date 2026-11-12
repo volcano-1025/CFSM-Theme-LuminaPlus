@@ -398,7 +398,15 @@ export function downsampleAligned(
   perTask: Array<Array<number | null | undefined>>,
   maxPoints: number,
   preservePeaks = false,
-): { times: number[]; perTask: Array<Array<number | null | undefined>> } {
+): {
+  times: number[];
+  perTask: Array<Array<number | null | undefined>>;
+  /**
+   * 输入的第 i 个点落进了输出的第几个点。没降采样时不给（一一对应）。
+   * 别的按样本聚合的量（Ping 图的丢包色带）要跟折线用同一套分桶，就靠它归格，见 `bucketPingLoss`。
+   */
+  sourceIndex?: number[];
+} {
   const length = times.length;
   if (length <= maxPoints || maxPoints <= 0) return { times, perTask };
 
@@ -406,6 +414,7 @@ export function downsampleAligned(
   const max = times[length - 1];
   const span = max - min;
   if (!(span > 0)) return { times, perTask };
+  const bucketOf = new Array<number>(length);
   const bucketDuration = span / maxPoints;
 
   const seriesCount = perTask.length;
@@ -426,6 +435,7 @@ export function downsampleAligned(
     let bucket = Math.floor((times[i] - min) / bucketDuration);
     if (bucket < 0) bucket = 0;
     else if (bucket >= maxPoints) bucket = maxPoints - 1;
+    bucketOf[i] = bucket;
     timeSum[bucket] += times[i];
     timeCount[bucket] += 1;
     for (let s = 0; s < seriesCount; s += 1) {
@@ -443,8 +453,10 @@ export function downsampleAligned(
 
   const outTimes: number[] = [];
   const outPerTask: Array<Array<number | null | undefined>> = perTask.map(() => []);
+  const outIndexOfBucket = new Array<number>(maxPoints).fill(-1);
   for (let bucket = 0; bucket < maxPoints; bucket += 1) {
     if (timeCount[bucket] === 0) continue; // 跳过没有任何样本的空桶
+    outIndexOfBucket[bucket] = outTimes.length;
     outTimes.push(timeSum[bucket] / timeCount[bucket]);
     for (let s = 0; s < seriesCount; s += 1) {
       if (nullCount[s][bucket] > 0) {
@@ -470,7 +482,11 @@ export function downsampleAligned(
     }
   }
 
-  return { times: outTimes, perTask: outPerTask };
+  return {
+    times: outTimes,
+    perTask: outPerTask,
+    sourceIndex: bucketOf.map((bucket) => outIndexOfBucket[bucket]),
+  };
 }
 
 // 按点数的滑动平均：每个数值点取前后各 floor(window/2) 个点取均值。降采样后各时段点数一致，

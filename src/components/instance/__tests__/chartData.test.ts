@@ -262,6 +262,16 @@ describe("downsampleAligned", () => {
     expect(out.perTask[0][0]).toBeNull(); // 桶内有丢包 → 断点优先，不被尖峰逻辑覆盖
     expect(out.perTask[0][1]).toBe(15);
   });
+
+  it("reports which output point each input point went into", () => {
+    // 4 个点降到 2 个：前两个进第 0 格、后两个进第 1 格。没降采样时不给（一一对应）。
+    expect(downsampleAligned([0, 10, 20, 30], [[1, 2, 3, 4]], 2).sourceIndex).toEqual([0, 0, 1, 1]);
+    expect(downsampleAligned([0, 10], [[1, 2]], 2).sourceIndex).toBeUndefined();
+    // 空桶被跳过后下标仍连续：0、1 在第 0 桶，100 在最后一桶 → 输出只有两个点。
+    const sparse = downsampleAligned([0, 1, 100], [[1, 2, 3]], 2);
+    expect(sparse.times).toHaveLength(2);
+    expect(sparse.sourceIndex).toEqual([0, 0, 1]);
+  });
 });
 
 describe("历史图接实时样本", () => {

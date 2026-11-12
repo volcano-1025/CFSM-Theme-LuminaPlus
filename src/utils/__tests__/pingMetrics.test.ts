@@ -61,6 +61,21 @@ describe("bucketPingLoss", () => {
     expect(bucketPingLoss([{ time: 0, lost: 0, total: 1 }], [])).toEqual([]);
   });
 
+  it("puts samples in the cell the chart's downsampling put them in, not the nearest one", () => {
+    // 中间那格的时刻是它两个样本（0、100）的平均 50；按「就近」0 会被左边那格（-20）抢走、100 被右边（120）抢走，
+    // 中间落空，色带上多出一段假的缺口。站长站点 6 小时档（行距 60 / 120 秒交替）就是这样。
+    const samples = [
+      { time: -20, lost: 0, total: 1 },
+      { time: 0, lost: 0, total: 1 },
+      { time: 100, lost: 1, total: 1 },
+      { time: 120, lost: 0, total: 1 },
+    ];
+    const targets = [-20, 50, 120];
+    expect(bucketPingLoss(samples, targets)[1]).toBeNull();
+    const cellOf = new Map([[-20, 0], [0, 1], [100, 1], [120, 2]]);
+    expect(bucketPingLoss(samples, targets, (time) => cellOf.get(time))).toEqual([0, 50, 0]);
+  });
+
   it("carries partial loss percentages through unrounded", () => {
     // resolvePingSampleCounts 把「一次采样丢 33%」保留成小数，聚合后不该被抹成 0 或 100。
     const counts = resolvePingSampleCounts({ value: 42, count: 1, loss: 33 });

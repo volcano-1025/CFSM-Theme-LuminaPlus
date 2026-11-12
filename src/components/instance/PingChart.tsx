@@ -297,12 +297,19 @@ export function PingChart({
       cutPeak ? SMOOTH_WINDOW_POINTS_PEAK : SMOOTH_WINDOW_POINTS,
     );
 
+    // 丢包样本的时刻就是上面的锚点（`times` 里的某一个），查它在降采样里落进了哪一格。
+    const sourceIndex = reduced.sourceIndex;
+    const indexOfTime = sourceIndex
+      ? new Map(times.map((time, index) => [time, sourceIndex[index]] as const))
+      : null;
+    const resolveLossIndex = indexOfTime ? (time: number) => indexOfTime.get(time) : undefined;
+
     return {
       data: [reduced.times, ...smoothed] as uPlot.AlignedData,
       // 归到与折线同一套时间格上，色带才能和曲线逐像素对齐。削峰/平滑只作用于延迟，
       // 丢包始终是真实值。
       loss: taskKeys.map((key) =>
-        bucketPingLoss(lossSamples.get(key) ?? [], reduced.times),
+        bucketPingLoss(lossSamples.get(key) ?? [], reduced.times, resolveLossIndex),
       ),
     };
   }, [cutPeak, data, sortedRecords, taskKeySet, taskKeys, tasks]);

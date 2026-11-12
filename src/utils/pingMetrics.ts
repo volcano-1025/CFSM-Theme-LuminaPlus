@@ -39,13 +39,16 @@ export interface PingLossSample {
  * 必须用加权平均（lost/total），不能像延迟那样取桶内极值：一桶里出现一次 100% 丢包
  * 就把整段染红，读者会以为断了几分钟。
  *
- * 对齐方式是「就近归入最接近的目标时刻」——降采样用的是等宽时间桶，桶心即目标时刻，
- * 就近归并与原桶划分至多差一格，而一格在屏幕上不到 1px。
+ * 归到哪一格由 `resolveIndex` 说了算：Ping 图传的是折线降采样时每个原始时刻落进的那一格，色带和折线才是同一套分桶。
+ * 不传（或它答不上来）才退回「就近归入最接近的目标时刻」。**只靠就近不行**：降采样后每格的时刻是格内样本时间的平均、不是桶心，
+ * 行距不匀时（站长站点 6 小时档是 60 秒、120 秒交替）一格里的两个样本会分别被左右两格「抢走」，这一格落空，
+ * 色带上就多出一段没有数据的缺口，其实历史一行没少（2026-11-12 站长截图，Oracle-sjc 6 小时档复现出 2 格）。
  * 返回值与 targetTimes 等长：该格没有任何样本时是 null（无数据），有样本才是百分比。
  */
 export function bucketPingLoss(
   samples: PingLossSample[],
   targetTimes: number[],
+  resolveIndex?: (time: number) => number | undefined,
 ): Array<number | null> {
   const out = new Array<number | null>(targetTimes.length).fill(null);
   if (targetTimes.length === 0 || samples.length === 0) return out;
@@ -55,7 +58,11 @@ export function bucketPingLoss(
 
   for (const sample of samples) {
     if (!Number.isFinite(sample.time) || sample.total <= 0) continue;
-    const index = nearestIndex(targetTimes, sample.time);
+    const resolved = resolveIndex?.(sample.time);
+    const index =
+      resolved != null && resolved >= 0 && resolved < targetTimes.length
+        ? resolved
+        : nearestIndex(targetTimes, sample.time);
     lost[index] += sample.lost;
     total[index] += sample.total;
   }
