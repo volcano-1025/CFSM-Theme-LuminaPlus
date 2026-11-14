@@ -1,1 +1,0 @@
-import{r as e}from"./useClock-C6I7Gdnb.js";var t=e(`ChevronUp`,[[`path`,{d:`m18 15-6-6-6 6`,key:`153udz`}]]);export{t};
