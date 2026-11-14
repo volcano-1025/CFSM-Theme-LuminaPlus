@@ -20,6 +20,7 @@ import {
   parseTrafficLimitBytes,
   toNodeInfo,
   toNodeMetrics,
+  disabledCarrierTaskIds,
 } from "@/services/cfsm/mappers";
 import { HistoryRowSchema } from "@/types/cfsm";
 
@@ -574,5 +575,19 @@ describe("inferIntervalSeconds", () => {
   it("is undefined without at least two distinct samples", () => {
     expect(inferIntervalSeconds([])).toBeUndefined();
     expect(inferIntervalSeconds([1000])).toBeUndefined();
+  });
+});
+
+describe("disabledCarrierTaskIds", () => {
+  it("lists the lines the node has turned off right now", () => {
+    // 电信、联通有值，移动整轮超时（负值，不算关掉），其余五条后台填了 0 → 当前数据里是 null。
+    const ping = { ...EMPTY_CARRIER_PING, ct: 36, cu: 34, cm: -1 };
+    expect(disabledCarrierTaskIds(ping)).toEqual([4, 5, 6, 7, 8]);
+  });
+
+  it("stays out of the way when there is nothing to go by", () => {
+    // 当前数据还没到，或一条有值的都没有：分不清是全关了还是没数据，不动图表。
+    expect(disabledCarrierTaskIds(undefined)).toEqual([]);
+    expect(disabledCarrierTaskIds(EMPTY_CARRIER_PING)).toEqual([]);
   });
 });

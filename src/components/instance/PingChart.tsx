@@ -5,11 +5,11 @@ import type uPlot from "uplot";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { usePingRecords } from "@/hooks/useRecords";
 import { useCarrierNames } from "@/hooks/usePublicConfig";
-import { useShowThreeNetDetails } from "@/hooks/useNode";
+import { useNodeMetrics, useShowThreeNetDetails } from "@/hooks/useNode";
 import { useNodeMultiPingTaskIds } from "@/hooks/usePingOverview";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { isHomepageMultiPingConfigured, orderTasksByCardLines } from "@/utils/pingTasks";
-import { carrierTaskName } from "@/services/cfsm/mappers";
+import { carrierTaskName, disabledCarrierTaskIds } from "@/services/cfsm/mappers";
 import { InstancePanel, InstanceChartLoading } from "./InstancePanel";
 import {
   buildChartTooltipHooks,
@@ -170,14 +170,19 @@ export function PingChart({
     enableHomepageMultiPing && showThreeNetDetails && isHomepageMultiPingConfigured(nodeCardTaskIds)
       ? nodeCardTaskIds
       : EMPTY_CARD_ORDER;
-  const tasks = useMemo(
-    () =>
-      orderTasksByCardLines(data?.tasks ?? [], cardOrder).map((task) => ({
+  // 后台刚关掉的线路（探测目标填 0）马上从图上去掉，不等历史里的旧数据过期。看的是节点当前数据，
+  // 实时帧每两秒来一次，所以拼成字符串当依赖：关掉的线路没变就不重算图表。
+  const liveMetrics = useNodeMetrics(uuid);
+  const disabledKey = disabledCarrierTaskIds(liveMetrics?.ping).join(",");
+  const tasks = useMemo(() => {
+    const disabled = new Set(disabledKey ? disabledKey.split(",").map(Number) : []);
+    return orderTasksByCardLines(data?.tasks ?? [], cardOrder)
+      .filter((task) => !disabled.has(task.id))
+      .map((task) => ({
         ...task,
         name: carrierTaskName(task.id, carrierNames),
-      })),
-    [cardOrder, carrierNames, data],
-  );
+      }));
+  }, [cardOrder, carrierNames, data, disabledKey]);
   const taskLabels = useMemo(() => {
     const counts = new Map<string, number>();
     for (const task of tasks) {

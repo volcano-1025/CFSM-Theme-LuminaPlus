@@ -35,6 +35,15 @@ interface MockServer {
   offline?: boolean;
 }
 
+/**
+ * `&off=bd,node_1`：模拟站长刚在后台把这几条线路的探测目标填成 0 —— 节点当前数据里它们变成 false，
+ * 历史里却还留着关掉之前的数据。看详情页 Ping 图会不会立刻把它们去掉。
+ */
+function lineOff(key: string): boolean {
+  const raw = new URLSearchParams(window.location.search).get("off");
+  return raw != null && raw.split(",").includes(key);
+}
+
 function daysFromNow(days: number) {
   const date = new Date(Date.now() + days * 86_400_000);
   return date.toISOString().slice(0, 10);
@@ -225,22 +234,22 @@ function buildServerPayload(server: MockServer, index: number) {
     tcp_conn: offline ? 0 : 48 + index * 19,
     udp_conn: offline ? 0 : 6 + index * 3,
 
-    ping_ct: offline ? null : Math.round(clamp(wave(index, 33_000, 12, 38), 1, 400)),
-    ping_cu: offline ? null : Math.round(clamp(wave(index + 1, 29_000, 18, 52), 1, 400)),
-    ping_cm: offline ? null : Math.round(clamp(wave(index + 2, 37_000, 26, 74), 1, 400)),
-    ping_bd: offline ? null : Math.round(clamp(wave(index + 4, 31_000, 9, 21), 1, 400)),
+    ping_ct: lineOff("ct") ? false : offline ? null : Math.round(clamp(wave(index, 33_000, 12, 38), 1, 400)),
+    ping_cu: lineOff("cu") ? false : offline ? null : Math.round(clamp(wave(index + 1, 29_000, 18, 52), 1, 400)),
+    ping_cm: lineOff("cm") ? false : offline ? null : Math.round(clamp(wave(index + 2, 37_000, 26, 74), 1, 400)),
+    ping_bd: lineOff("bd") ? false : offline ? null : Math.round(clamp(wave(index + 4, 31_000, 9, 21), 1, 400)),
     // 后端 2.8.5 Beta4 起多出来的四条自定义线路。node_3/4 故意留空，
     // 模拟「后台没给这两个槽位配探测目标」——主题应当显示「无样本」而不是画一条 0ms 的线。
-    ping_node_1: offline ? null : Math.round(clamp(wave(index + 5, 27_000, 14, 46), 1, 400)),
-    ping_node_2: offline ? null : Math.round(clamp(wave(index + 6, 41_000, 30, 96), 1, 400)),
+    ping_node_1: lineOff("node_1") ? false : offline ? null : Math.round(clamp(wave(index + 5, 27_000, 14, 46), 1, 400)),
+    ping_node_2: lineOff("node_2") ? false : offline ? null : Math.round(clamp(wave(index + 6, 41_000, 30, 96), 1, 400)),
     ping_node_3: null,
     ping_node_4: null,
-    loss_ct: offline ? null : 0,
-    loss_cu: offline ? null : index === 1 ? 4 : 0,
-    loss_cm: offline ? null : 0,
-    loss_bd: offline ? null : 0,
-    loss_node_1: offline ? null : 0,
-    loss_node_2: offline ? null : index === 2 ? 6 : 0,
+    loss_ct: lineOff("ct") ? false : offline ? null : 0,
+    loss_cu: lineOff("cu") ? false : offline ? null : index === 1 ? 4 : 0,
+    loss_cm: lineOff("cm") ? false : offline ? null : 0,
+    loss_bd: lineOff("bd") ? false : offline ? null : 0,
+    loss_node_1: lineOff("node_1") ? false : offline ? null : 0,
+    loss_node_2: lineOff("node_2") ? false : offline ? null : index === 2 ? 6 : 0,
     loss_node_3: null,
     loss_node_4: null,
 

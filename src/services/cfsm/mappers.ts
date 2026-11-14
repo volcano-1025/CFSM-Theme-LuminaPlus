@@ -378,6 +378,19 @@ function carrierPingFrom(row: Record<string, unknown>): CarrierPingSnapshot {
   return ping;
 }
 
+/**
+ * 这台节点现在已经关掉的线路（后台把探测目标填成 0）：当前数据里延迟是 null（后端下发 `false`）。
+ *
+ * 详情页 Ping 图拿它把关掉的线路立刻去掉 —— 历史里还留着关掉之前的数据，只看历史的话那条线要等数据过期才消失
+ * （站长 2026-11-14）。整轮超时读出来是负值、不是 null，不算关掉。
+ * 一条有值的都没有时返回空：分不清是「全关了」还是「当前数据还没到 / 节点从没报过延迟」，这时不动图表。
+ */
+export function disabledCarrierTaskIds(ping: CarrierPingSnapshot | null | undefined): number[] {
+  if (!ping) return [];
+  const disabled = CARRIER_TASKS.filter((task) => ping[task.key] == null).map((task) => task.id);
+  return disabled.length === CARRIER_TASKS.length ? [] : disabled;
+}
+
 export function carrierPingFromServer(server: CfsmServer): CarrierPingSnapshot {
   return carrierPingFrom(server as unknown as Record<string, unknown>);
 }
